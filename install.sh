@@ -38,6 +38,9 @@ warn() { echo -e "  ${Y}⚠${N} $1"; }
 fail() { echo -e "  ${R}✗${N} $1"; }
 step() { echo -e "\n${B}[$1]${N} ${BOLD}$2${N}"; }
 
+# shellcheck source=sf-service-lib.sh
+source "$REPO_DIR/sf-service-lib.sh"
+
 # ═══════════════════════════════════════════════════════════════
 # UNINSTALL — ./install.sh uninstall
 # ═══════════════════════════════════════════════════════════════
@@ -224,10 +227,20 @@ if ssh_ok; then
 fi
 
 # ────────────────────────────────────────────────────────────────
-step "2/4" "Starting services"
+step "2/5" "Clean broken agents + Mail.app setup (waits until ready)"
 # ────────────────────────────────────────────────────────────────
 
-ok "Email via supportshell SMTP (no mail client needed)"
+if [ "$IS_MAC" -eq 1 ]; then
+    _sf_clean_agents
+    _sf_wait_for_mail
+    ok "Mail.app setup complete — continuing"
+else
+    ok "Linux: Mail.app not required"
+fi
+
+# ────────────────────────────────────────────────────────────────
+step "3/5" "Starting services"
+# ────────────────────────────────────────────────────────────────
 
 if [ "$IS_MAC" -eq 1 ]; then
     # ── macOS: LaunchAgents ──
@@ -235,13 +248,6 @@ if [ "$IS_MAC" -eq 1 ]; then
 
     SSH_SOCK="${SSH_AUTH_SOCK:-}"
     [ -z "$SSH_SOCK" ] && SSH_SOCK=$(ls /private/tmp/com.apple.launchd.*/Listeners 2>/dev/null | head -1 || echo "")
-
-    pgrep -x "Mail" > /dev/null 2>&1 && ok "Mail.app running (bonus: also sends via Mail.app)"
-
-    LC_DOMAIN="gui/$(id -u)"
-    launchctl bootout "${LC_DOMAIN}/${MAILER_LABEL}" 2>/dev/null || true
-    launchctl unload "$LAUNCH_DIR/$MAILER_LABEL.plist" 2>/dev/null || true
-    pkill -f "local-mailserver" 2>/dev/null || true
 
     cat > "$LAUNCH_DIR/$MAILER_LABEL.plist" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -264,15 +270,14 @@ if [ "$IS_MAC" -eq 1 ]; then
 </dict>
 </plist>
 PLISTEOF
-    if ! launchctl bootstrap "$LC_DOMAIN" "$LAUNCH_DIR/$MAILER_LABEL.plist" 2>/dev/null; then
-        launchctl load "$LAUNCH_DIR/$MAILER_LABEL.plist" 2>/dev/null || true
+    if _sf_launch_start "$MAILER_LABEL" "$LAUNCH_DIR/$MAILER_LABEL.plist"; then
+        _sf_wait_for_port 8090 "Dashboard" || true
+        _sf_wait_for_port 2525 "Local SMTP" || true
+        ok "Dashboard + local SMTP started"
+    else
+        fail "Could not start mail server LaunchAgent"
+        exit 1
     fi
-    launchctl enable "${LC_DOMAIN}/${MAILER_LABEL}" 2>/dev/null || true
-    launchctl kickstart -k "${LC_DOMAIN}/${MAILER_LABEL}" 2>/dev/null || true
-    ok "Dashboard started (port 8090)"
-
-    launchctl bootout "${LC_DOMAIN}/${POLLER_LABEL}" 2>/dev/null || true
-    launchctl unload "$LAUNCH_DIR/$POLLER_LABEL.plist" 2>/dev/null || true
 
     cat > "$LAUNCH_DIR/$POLLER_LABEL.plist" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -296,12 +301,12 @@ PLISTEOF
 </dict>
 </plist>
 PLISTEOF
-    if ! launchctl bootstrap "$LC_DOMAIN" "$LAUNCH_DIR/$POLLER_LABEL.plist" 2>/dev/null; then
-        launchctl load "$LAUNCH_DIR/$POLLER_LABEL.plist" 2>/dev/null || true
+    if _sf_launch_start "$POLLER_LABEL" "$LAUNCH_DIR/$POLLER_LABEL.plist"; then
+        ok "SF case poller started (every 60s)"
+    else
+        fail "Could not start poller LaunchAgent"
+        exit 1
     fi
-    launchctl enable "${LC_DOMAIN}/${POLLER_LABEL}" 2>/dev/null || true
-    launchctl kickstart -k "${LC_DOMAIN}/${POLLER_LABEL}" 2>/dev/null || true
-    ok "SF case poller started (every 60s)"
 
 else
     # ── Linux: systemd user services (24/7 on server) ──
@@ -356,10 +361,13 @@ SVCEOF
 fi
 
 # ────────────────────────────────────────────────────────────────
-step "3/4" "Opening dashboard"
+step "4/5" "Opening dashboard"
 # ────────────────────────────────────────────────────────────────
 
-for i in 1 2 3; do curl -s -o /dev/null http://localhost:8090 2>/dev/null && break; sleep 0.5; done
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    curl -s -o /dev/null http://localhost:8090 2>/dev/null && break
+    sleep 1
+done
 
 [ "$IS_MAC" -eq 1 ] && open "http://localhost:8090" 2>/dev/null || true
 
@@ -367,7 +375,7 @@ ok "Dashboard ready — cases loading in background"
 ok "http://localhost:8090"
 
 # ────────────────────────────────────────────────────────────────
-step "4/4" "Done"
+step "5/5" "Done"
 # ────────────────────────────────────────────────────────────────
 
 echo ""
@@ -375,7 +383,7 @@ echo -e "${G}╔═════════════════════�
 echo -e "${G}║  ${BOLD}✅ Installation complete!${N}${G}                              ║${N}"
 echo -e "${G}║                                                       ║${N}"
 echo -e "${G}║  Dashboard:   ${BOLD}http://localhost:8090${N}${G}                    ║${N}"
-echo -e "${G}║  Email:       ${BOLD}via supportshell SMTP (no mail client)${N}${G}   ║${N}"
+echo -e "${G}║  Email:       ${BOLD}Mail.app (waits until account ready)${N}${G}      ║${N}"
 echo -e "${G}║  Uninstall:   ${BOLD}./install.sh uninstall${N}${G}                   ║${N}"
 echo -e "${G}║                                                       ║${N}"
 echo -e "${G}║  Data source: Red Hat GraphQL API (no browser needed) ║${N}"

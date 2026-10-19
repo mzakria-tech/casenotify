@@ -1,58 +1,45 @@
 #!/bin/bash
-# Start all SF Notification Center services
+# Start all SF Notification Center services (waits for Mail; self-heals LaunchAgents)
+
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=sf-service-lib.sh
+source "$REPO_DIR/sf-service-lib.sh"
 
 echo "Starting SF Notification Center..."
 
-# Start Mail.app if not running
-if ! pgrep -x "Mail" > /dev/null; then
-    echo "→ Opening Mail.app..."
-    open -a Mail
-    sleep 2
+# Self-heal broken LaunchAgents, then wait until Mail account setup is done
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    _sf_clean_agents
+    _sf_wait_for_mail
 fi
 
-# Check Chrome
-if ! pgrep -x "Google Chrome" > /dev/null; then
+if ! pgrep -x "Google Chrome" >/dev/null 2>&1; then
     echo "→ Opening Google Chrome..."
-    open -a "Google Chrome"
-    sleep 3
+    open -a "Google Chrome" 2>/dev/null || true
+    sleep 2
 fi
 
 POLLER_LABEL="com.${USER}.sf-case-poller"
 MAILER_LABEL="com.${USER}.local-mailserver"
-DOMAIN="gui/$(id -u)"
 LAUNCH_DIR="$HOME/Library/LaunchAgents"
 
-_launch_start() {
-    local label="$1"
-    local plist="$LAUNCH_DIR/${label}.plist"
-    if [ ! -f "$plist" ]; then
-        echo "→ Missing $plist — run ./install.sh first"
-        return 1
-    fi
-    # macOS Ventura+: use bootstrap/bootout (load/unload hits "Load failed: 5")
-    launchctl bootout "${DOMAIN}/${label}" 2>/dev/null || true
-    launchctl bootout "$DOMAIN" "$plist" 2>/dev/null || true
-    launchctl unload "$plist" 2>/dev/null || true
-    sleep 1
-    if launchctl bootstrap "$DOMAIN" "$plist" 2>/dev/null; then
-        launchctl enable "${DOMAIN}/${label}" 2>/dev/null || true
-        launchctl kickstart -k "${DOMAIN}/${label}" 2>/dev/null || true
-        return 0
-    fi
-    # Fallback for older macOS
-    if launchctl load "$plist" 2>/dev/null; then
-        return 0
-    fi
-    echo "→ Failed to start $label"
-    return 1
-}
+if _sf_launch_start "$MAILER_LABEL" "$LAUNCH_DIR/${MAILER_LABEL}.plist"; then
+    echo "→ Mail Server + Dashboard started"
+    _sf_wait_for_port 8090 "Dashboard" || true
+    _sf_wait_for_port 2525 "Local SMTP" || true
+else
+    echo "→ Mail Server failed — try: ./install.sh"
+fi
 
-_launch_start "$MAILER_LABEL" && echo "→ Mail Server + Dashboard started (port 8090)"
-_launch_start "$POLLER_LABEL" && echo "→ SF Case Poller started (every 1 min)"
+if _sf_launch_start "$POLLER_LABEL" "$LAUNCH_DIR/${POLLER_LABEL}.plist"; then
+    echo "→ SF Case Poller started (every 1 min)"
+else
+    echo "→ Poller failed — try: ./install.sh"
+fi
 
 echo ""
 echo "╔═══════════════════════════════════════════════╗"
-echo "║  ✅ All services running!                     ║"
+echo "║  ✅ Startup complete                          ║"
 echo "║                                               ║"
 echo "║  Dashboard:  http://localhost:8090             ║"
 echo "║  Poller log: ~/Library/Logs/sf-case-poller.log║"

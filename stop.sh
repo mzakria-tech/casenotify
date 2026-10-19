@@ -1,27 +1,22 @@
 #!/bin/bash
 # Stop all SF Notification Center services
 
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=sf-service-lib.sh
+source "$REPO_DIR/sf-service-lib.sh"
+
 echo "Stopping SF Notification Center..."
 
 POLLER_LABEL="com.${USER}.sf-case-poller"
 MAILER_LABEL="com.${USER}.local-mailserver"
-DOMAIN="gui/$(id -u)"
 LAUNCH_DIR="$HOME/Library/LaunchAgents"
 
-_launch_stop() {
-    local label="$1"
-    local plist="$LAUNCH_DIR/${label}.plist"
-    if launchctl bootout "${DOMAIN}/${label}" 2>/dev/null \
-        || launchctl bootout "$DOMAIN" "$plist" 2>/dev/null \
-        || launchctl unload "$plist" 2>/dev/null; then
-        echo "→ ${label} stopped"
-    else
-        echo "→ ${label} was not running"
-    fi
-}
-
-_launch_stop "$POLLER_LABEL"
-_launch_stop "$MAILER_LABEL"
+_sf_launch_stop "$POLLER_LABEL" "$LAUNCH_DIR/${POLLER_LABEL}.plist"
+echo "→ SF Case Poller stopped"
+_sf_launch_stop "$MAILER_LABEL" "$LAUNCH_DIR/${MAILER_LABEL}.plist"
+echo "→ Mail Server + Dashboard stopped"
+pkill -f "local-mailserver" 2>/dev/null || true
+pkill -f "sf-case-poller.*poll" 2>/dev/null || true
 
 echo ""
 echo "All services stopped."
