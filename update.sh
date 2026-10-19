@@ -75,6 +75,7 @@ RC=$?
 set -e
 echo "$OUT" | tail -20
 if echo "$OUT" | grep -q "status=OK"; then
+    open "http://localhost:8090" 2>/dev/null || true
     echo ""
     echo -e "${G}╔═══════════════════════════════════════════════╗${N}"
     echo -e "${G}║  ✅ Update OK — GraphQL discovery healthy     ║${N}"

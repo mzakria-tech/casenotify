@@ -51,6 +51,10 @@ if ! echo "$ONCE_OUT" | grep -q "status=OK"; then
     echo "    cd \"$REPO_DIR\" && ./update.sh"
 fi
 
+# Auto-open dashboard in the default browser
+echo "→ Opening dashboard..."
+open "http://localhost:8090" 2>/dev/null || true
+
 echo ""
 echo "╔═══════════════════════════════════════════════╗"
 echo "║  ✅ Startup complete                          ║"
