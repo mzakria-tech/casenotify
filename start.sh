@@ -10,13 +10,14 @@ echo "→ Email via supportshell → smtp.corp.redhat.com (no Mail.app)"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
     _sf_clean_agents
+    _sf_ensure_plists || exit 1
 fi
 
 POLLER_LABEL="com.${USER}.sf-case-poller"
 MAILER_LABEL="com.${USER}.local-mailserver"
 LAUNCH_DIR="$HOME/Library/LaunchAgents"
 
-# local-mailserver = dashboard UI only (port 8090); mail does NOT go through it
+# local-mailserver = dashboard UI only (port 8090); mail goes via supportshell SMTP
 if _sf_launch_start "$MAILER_LABEL" "$LAUNCH_DIR/${MAILER_LABEL}.plist"; then
     echo "→ Dashboard started"
     _sf_wait_for_port 8090 "Dashboard" || true

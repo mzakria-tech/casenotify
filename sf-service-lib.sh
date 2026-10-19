@@ -43,6 +43,98 @@ _sf_clean_agents() {
     echo "  ✓ Stale agents cleared"
 }
 
+_sf_ensure_plists() {
+    # Create LaunchAgent plists if missing (self-heal when install died early)
+    local user="${USER:-$(whoami)}"
+    local home="${HOME}"
+    local bin="$home/.local/bin"
+    local launch="$home/Library/LaunchAgents"
+    local logdir="$home/Library/Logs"
+    local python
+    python="$(command -v python3 || echo /usr/bin/python3)"
+    local poller_label="com.${user}.sf-case-poller"
+    local mailer_label="com.${user}.local-mailserver"
+    local ssh_sock="${SSH_AUTH_SOCK:-}"
+    [ -z "$ssh_sock" ] && ssh_sock=$(ls /private/tmp/com.apple.launchd.*/Listeners 2>/dev/null | head -1 || echo "")
+
+    mkdir -p "$launch" "$bin" "$logdir" "$home/.local/state"
+
+    # Copy scripts from repo if present next to this lib
+    local repo
+    repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$repo/sf-case-poller" ]; then
+        cp "$repo/sf-case-poller" "$bin/sf-case-poller"
+        chmod +x "$bin/sf-case-poller"
+    fi
+    if [ -f "$repo/local-mailserver" ]; then
+        cp "$repo/local-mailserver" "$bin/local-mailserver"
+        chmod +x "$bin/local-mailserver"
+    fi
+
+    if [ ! -f "$bin/sf-case-poller" ] || [ ! -f "$bin/local-mailserver" ]; then
+        echo "  ✗ Scripts missing in $bin — run: cd <repo> && ./install.sh"
+        return 1
+    fi
+
+    # Default config
+    local cfg="$home/.local/state/sf-poller-config.json"
+    if [ ! -f "$cfg" ]; then
+        cat > "$cfg" <<EOF
+{
+  "notify_email": "${user}@redhat.com",
+  "supportshell_user": "${user}"
+}
+EOF
+    fi
+
+    cat > "$launch/${mailer_label}.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>${mailer_label}</string>
+    <key>ProgramArguments</key>
+    <array><string>${python}</string><string>${bin}/local-mailserver</string></array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key><string>${home}</string>
+        <key>USER</key><string>${user}</string>
+        <key>SSH_AUTH_SOCK</key><string>${ssh_sock}</string>
+    </dict>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>StandardOutPath</key><string>/tmp/local-mailserver.log</string>
+    <key>StandardErrorPath</key><string>/tmp/local-mailserver.log</string>
+</dict>
+</plist>
+EOF
+
+    cat > "$launch/${poller_label}.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>${poller_label}</string>
+    <key>ProgramArguments</key>
+    <array><string>${python}</string><string>${bin}/sf-case-poller</string><string>poll</string></array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SF_POLL_INTERVAL</key><string>60</string>
+        <key>HOME</key><string>${home}</string>
+        <key>USER</key><string>${user}</string>
+        <key>SSH_AUTH_SOCK</key><string>${ssh_sock}</string>
+    </dict>
+    <key>KeepAlive</key><true/>
+    <key>ThrottleInterval</key><integer>5</integer>
+    <key>StandardOutPath</key><string>${logdir}/sf-case-poller.log</string>
+    <key>StandardErrorPath</key><string>${logdir}/sf-case-poller.log</string>
+</dict>
+</plist>
+EOF
+    echo "  ✓ LaunchAgent plists ready for ${user}"
+    return 0
+}
+
 _sf_launch_start() {
     # Start a LaunchAgent with retries (self-heals "Load failed: 5" / stale jobs)
     local label="$1"
@@ -51,8 +143,8 @@ _sf_launch_start() {
     domain="$(_sf_domain)"
 
     if [ ! -f "$plist" ]; then
-        echo "  ✗ Missing $plist — run ./install.sh first"
-        return 1
+        echo "  ⚠ Missing $plist — recreating..."
+        _sf_ensure_plists || return 1
     fi
 
     while [ "$tries" -lt 5 ]; do

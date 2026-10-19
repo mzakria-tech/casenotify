@@ -114,23 +114,48 @@ echo -e "${BOLD}╚════════════════════�
 step "1/4" "Setup"
 # ────────────────────────────────────────────────────────────────
 
-[ -z "$PYTHON" ] && fail "Python3 not found. Install: sudo yum install python3 / brew install python3" && exit 1
-command -v ssh &>/dev/null || { fail "SSH not found"; exit 1; }
-if ! "$PYTHON" -c "import aiosmtpd" 2>/dev/null; then
-    "$PYTHON" -m pip install --quiet aiosmtpd 2>/dev/null || pip3 install --quiet --user aiosmtpd 2>/dev/null
-    "$PYTHON" -c "import aiosmtpd" 2>/dev/null || { fail "pip3 install aiosmtpd"; exit 1; }
+if [ -z "$PYTHON" ]; then
+    fail "Python3 not found. Install: brew install python3"
+    exit 1
+fi
+if ! command -v ssh >/dev/null 2>&1; then
+    fail "SSH not found"
+    exit 1
 fi
 
-mkdir -p "$BIN_DIR" "$STATE_DIR" "$LOG_DIR"
-cp "$REPO_DIR/sf-case-poller" "$BIN_DIR/sf-case-poller" && chmod +x "$BIN_DIR/sf-case-poller"
-cp "$REPO_DIR/local-mailserver" "$BIN_DIR/local-mailserver" && chmod +x "$BIN_DIR/local-mailserver"
-cp "$REPO_DIR/sf-ssh-setup" "$BIN_DIR/sf-ssh-setup" && chmod +x "$BIN_DIR/sf-ssh-setup"
+# aiosmtpd is only needed for the local dashboard SMTP catcher — never abort install
+if ! "$PYTHON" -c "import aiosmtpd" 2>/dev/null; then
+    warn "Installing aiosmtpd (dashboard)..."
+    set +e
+    "$PYTHON" -m pip install --user --quiet aiosmtpd 2>/tmp/sf-pip.err \
+        || pip3 install --user --quiet aiosmtpd 2>>/tmp/sf-pip.err \
+        || "$PYTHON" -m pip install --break-system-packages --user --quiet aiosmtpd 2>>/tmp/sf-pip.err
+    set -e
+    if ! "$PYTHON" -c "import aiosmtpd" 2>/dev/null; then
+        warn "aiosmtpd not installed — dashboard may fail; email still works via supportshell SMTP"
+        cat /tmp/sf-pip.err 2>/dev/null | sed 's/^/    /' | head -5 || true
+    else
+        ok "aiosmtpd installed"
+    fi
+fi
+
+mkdir -p "$BIN_DIR" "$STATE_DIR" "$LOG_DIR" "$LAUNCH_DIR"
+cp "$REPO_DIR/sf-case-poller" "$BIN_DIR/sf-case-poller"
+cp "$REPO_DIR/local-mailserver" "$BIN_DIR/local-mailserver"
+cp "$REPO_DIR/sf-ssh-setup" "$BIN_DIR/sf-ssh-setup" 2>/dev/null || true
+chmod +x "$BIN_DIR/sf-case-poller" "$BIN_DIR/local-mailserver"
+[ -f "$BIN_DIR/sf-ssh-setup" ] && chmod +x "$BIN_DIR/sf-ssh-setup"
 
 # Add to PATH in shell rc
 SHELL_RC="$HOME_DIR/.bashrc"
-[ -f "$HOME_DIR/.zshrc" ] && SHELL_RC="$HOME_DIR/.zshrc"
-grep -q '.local/bin' "$SHELL_RC" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+if [ -f "$HOME_DIR/.zshrc" ]; then
+    SHELL_RC="$HOME_DIR/.zshrc"
+fi
+if ! grep -q '.local/bin' "$SHELL_RC" 2>/dev/null; then
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+fi
 export PATH="$BIN_DIR:$PATH"
+ok "Python + scripts ready"
 
 CFG="$STATE_DIR/sf-poller-config.json"
 if [ ! -f "$CFG" ]; then
