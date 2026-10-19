@@ -712,7 +712,7 @@ def _ssh_python(script: str, timeout: int = 30) -> str:
 def discover_cases_graphql() -> list[dict]:
     """Discover all open cases owned by the current user via Red Hat GraphQL API.
     No Chrome needed — pulls directly from Salesforce via GraphQL."""
-    # Seed OwnerId from local config / known case numbers (Case_Owner_Alias__c was removed from GraphQL schema)
+    # Seed OwnerId from local config / known case numbers (Case_Owner_Alias__c removed from schema)
     known_owner = ""
     known_case_numbers: list[str] = []
     try:
@@ -741,10 +741,11 @@ def discover_cases_graphql() -> list[dict]:
     known_cases_json = json.dumps(known_case_numbers)
 
     script = f'''
-import json, urllib.request, urllib.parse, os, urllib.error
+import json, urllib.request, urllib.parse, os, urllib.error, re
 
 SEED_OWNER = {json.dumps(known_owner)}
 SEED_CASES = {known_cases_json}
+SF_ID_RE = re.compile(r"^005[A-Za-z0-9]{{12,18}}$")
 
 def get_token():
     gql_file = os.path.expanduser("~/.cache/hydra-mcp/tokens/redhat-sso-token.json")
@@ -767,23 +768,49 @@ def gql_request(query, variables, token):
     req.add_header("Authorization", "Bearer " + token)
     req.add_header("Content-Type", "application/json")
     req.add_header("Accept", "application/json")
+    # Required by vpn.graphql.redhat.com — missing headers => HTTP 400 Bad Request
     req.add_header("apollographql-client-name", "redhat-hydra-mcp-server")
     req.add_header("apollographql-client-version", "0.1.0")
     try:
         resp = urllib.request.urlopen(req, timeout=30)
-        return json.loads(resp.read())
+        data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:400]
-        raise RuntimeError("HTTP Error %s: %s" % (e.code, detail))
+        detail = e.read().decode("utf-8", "replace")[:500]
+        raise RuntimeError("HTTP %s: %s" % (e.code, detail))
+    errs = data.get("errors") or []
+    if errs and not (data.get("data") or {{}}):
+        raise RuntimeError("GraphQL: %s" % (errs[0].get("message") or errs[0])[:300])
+    return data
+
+def _valid_oid(oid):
+    return bool(oid and SF_ID_RE.match(oid.strip()))
 
 def resolve_owner_id(token):
-    owner_id = (SEED_OWNER or "").strip()
     owner_id_file = os.path.expanduser("~/.cache/hydra-mcp/sf-owner-id.txt")
-    if not owner_id and os.path.exists(owner_id_file):
-        with open(owner_id_file) as f:
-            owner_id = f.read().strip()
+    candidates = []
 
-    # Prefer recent cases from yank/mcp context + local seed case numbers
+    # 1) GraphQL currentUser — works cold-start, no Case_Owner_Alias__c
+    try:
+        r = gql_request("query {{ redhat_support_uiapi {{ currentUser {{ Id }} }} }}", {{}}, token)
+        oid = ((r.get("data") or {{}}).get("redhat_support_uiapi") or {{}}).get("currentUser") or {{}}
+        oid = (oid.get("Id") or "").strip()
+        if _valid_oid(oid):
+            candidates.append(oid)
+    except Exception:
+        pass
+
+    for src in (SEED_OWNER,):
+        if _valid_oid(src):
+            candidates.append(src.strip())
+    if os.path.exists(owner_id_file):
+        try:
+            cached = open(owner_id_file).read().strip()
+            if _valid_oid(cached):
+                candidates.append(cached)
+        except Exception:
+            pass
+
+    # 2) Fallback: OwnerId from a known case number
     case_numbers = list(SEED_CASES or [])
     mcp_ctx = os.path.expanduser("~/.yank/mcp-context.json")
     if os.path.exists(mcp_ctx):
@@ -799,7 +826,7 @@ def resolve_owner_id(token):
         except Exception:
             pass
 
-    if not owner_id:
+    if not candidates:
         seen = set()
         for cn in case_numbers:
             if not cn or cn in seen:
@@ -820,12 +847,13 @@ def resolve_owner_id(token):
                          .get("query", {{}}).get("RedHatSupportCase", {{}}).get("edges", []))
                 if edges:
                     oid = ((edges[0].get("node", {{}}).get("OwnerId", {{}}) or {{}}).get("value") or "").strip()
-                    if oid:
-                        owner_id = oid
+                    if _valid_oid(oid):
+                        candidates.append(oid)
                         break
             except Exception:
                 continue
 
+    owner_id = candidates[0] if candidates else ""
     if owner_id:
         try:
             os.makedirs(os.path.dirname(owner_id_file), exist_ok=True)
@@ -835,16 +863,10 @@ def resolve_owner_id(token):
             pass
     return owner_id
 
-try:
-    at = get_token()
-    owner_id = resolve_owner_id(at)
-
-    if not owner_id:
-        print(json.dumps({{"error": "could not determine OwnerId (Case_Owner_Alias__c removed; need known case or sf_owner_id)"}}))
-        raise SystemExit(1)
-
-    # Query all my open cases with status + lastModified + comments metadata
-    q2 = """query ListMyCases($oid: ID!) {{
+def list_cases(token, owner_id):
+    # Prefer rich query; fall back if CaseComments__r shape changes
+    queries = [
+"""query ListMyCases($oid: ID!) {{
   redhat_support_uiapi {{
     query {{
       RedHatSupportCase(
@@ -873,10 +895,50 @@ try:
       }}
     }}
   }}
-}}"""
-    r2 = gql_request(q2, {{"oid": owner_id}}, at)
+}}""",
+"""query ListMyCases($oid: ID!) {{
+  redhat_support_uiapi {{
+    query {{
+      RedHatSupportCase(
+        where: {{ OwnerId: {{ eq: $oid }}, IsClosed: {{ eq: false }} }}
+        first: 50
+        orderBy: {{ LastModifiedDate: {{ order: DESC }} }}
+      ) {{
+        edges {{
+          node {{
+            Id
+            CaseNumber__c {{ value }}
+            Subject {{ value }}
+            Status {{ value }}
+            LastModifiedDate {{ value }}
+            OwnerId {{ value }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}""",
+    ]
+    last_err = None
+    for q in queries:
+        try:
+            return gql_request(q, {{"oid": owner_id}}, token)
+        except Exception as ex:
+            last_err = ex
+            continue
+    raise last_err or RuntimeError("ListMyCases failed")
+
+try:
+    at = get_token()
+    owner_id = resolve_owner_id(at)
+
+    if not owner_id:
+        print(json.dumps({{"error": "could not determine OwnerId (currentUser/sf_owner_id/known case all failed)"}}))
+        raise SystemExit(1)
+
+    r2 = list_cases(at, owner_id)
     edges2 = (r2.get("data", {{}}).get("redhat_support_uiapi", {{}})
-              .get("query", {{}}).get("RedHatSupportCase", {{}}).get("edges", []))
+              .get("query", {{}}).get("RedHatSupportCase", {{}}).get("edges", [])) or []
 
     cases = []
     for e in edges2:
@@ -886,7 +948,7 @@ try:
         status = (n.get("Status", {{}}) or {{}}).get("value", "")
         subject = (n.get("Subject", {{}}) or {{}}).get("value", "")
         last_mod = (n.get("LastModifiedDate", {{}}) or {{}}).get("value", "")
-        c_edges = (n.get("CaseComments__r", {{}}) or {{}}).get("edges", [])
+        c_edges = (n.get("CaseComments__r", {{}}) or {{}}).get("edges", []) or []
         comment_count = len(c_edges)
         latest_date = ""
         latest_author = ""
@@ -911,9 +973,9 @@ except Exception as ex:
     try:
         data = json.loads(out)
         if "error" in data:
-            log_warn("graphql_discover_error", error=data["error"][:300])
+            log_warn("graphql_discover_error", error=data["error"][:400])
             return []
-        # Persist OwnerId locally so cold starts skip broken alias discovery
+        # Persist OwnerId locally so cold starts are fast
         oid = str(data.get("ownerId") or "").strip()
         if oid:
             try:

@@ -5,7 +5,6 @@ SMTP on port 2525, Web UI on port 8090.
 Shows live service health, tracked cases, and email notifications.
 """
 
-import asyncio
 import json
 import os
 import subprocess
@@ -13,10 +12,17 @@ import sys
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
-from aiosmtpd.controller import Controller
-from aiosmtpd.handlers import Message
 
 import time
+
+try:
+    from aiosmtpd.controller import Controller
+    from aiosmtpd.handlers import Message
+    HAS_AIOSMTPD = True
+except ImportError:
+    Controller = None  # type: ignore
+    Message = object  # type: ignore
+    HAS_AIOSMTPD = False
 
 EMAILS = []
 STATE_PATH = os.path.expanduser("~/.local/state/sf-case-status.json")
@@ -26,6 +32,7 @@ WATCHDOG_LOG = []  # last 20 actions for dashboard display
 POLLER_LABEL = f"com.{os.environ.get('USER', 'mzakria')}.sf-case-poller"
 LAUNCH_DIR = os.path.expanduser("~/Library/LaunchAgents")
 SSH_STATUS = {"running": True, "label": "SSH/GraphQL", "last_check": 0}  # cached, updated by watchdog
+SMTP_ENABLED = False
 
 
 def _read_config() -> dict:
@@ -848,13 +855,14 @@ def _watchdog_loop():
             except Exception as e:
                 SSH_STATUS["running"] = False
 
-            # ── 4. SMTP relay ──
-            try:
-                import smtplib
-                with smtplib.SMTP("127.0.0.1", 2525, timeout=3) as s:
-                    s.noop()
-            except Exception:
-                _watchdog_log("⚠ SMTP port 2525 not responding — should self-recover")
+            # ── 4. Local SMTP catcher (optional — real mail uses supportshell SMTP) ──
+            if SMTP_ENABLED:
+                try:
+                    import smtplib
+                    with smtplib.SMTP("127.0.0.1", 2525, timeout=3) as s:
+                        s.noop()
+                except Exception:
+                    _watchdog_log("⚠ Local SMTP :2525 down (dashboard catcher only; supportshell mail OK)")
 
             # ── 5. Heartbeat freshness → force restart stale poller ──
             try:
@@ -941,16 +949,26 @@ def _watchdog_loop():
 
 
 def main():
+    global SMTP_ENABLED
     print("=" * 50)
     print("  SF Notification Center")
-    print("  SMTP: localhost:2525")
     print("  Web:  http://localhost:8090")
-    print("  Watchdog: auto-heals every 30s")
+    print("  Mail: supportshell SMTP (alerts)")
+    print("  Watchdog: auto-heals every 60s")
     print("=" * 50)
 
-    controller = Controller(MailHandler(), hostname="0.0.0.0", port=2525)
-    controller.start()
-    print("[SMTP] Listening on port 2525")
+    if HAS_AIOSMTPD and Controller is not None:
+        try:
+            controller = Controller(MailHandler(), hostname="0.0.0.0", port=2525)
+            controller.start()
+            SMTP_ENABLED = True
+            print("[SMTP] Local catcher on :2525 (optional dashboard preview)")
+        except Exception as exc:
+            print(f"[SMTP] Local catcher skipped: {exc}")
+            SMTP_ENABLED = False
+    else:
+        print("[SMTP] aiosmtpd not installed — dashboard only (email via supportshell)")
+        SMTP_ENABLED = False
 
     # Start self-healing watchdog
     wd = threading.Thread(target=_watchdog_loop, daemon=True)
