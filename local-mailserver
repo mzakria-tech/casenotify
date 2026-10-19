@@ -353,7 +353,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <div class="stat">
     <div class="stat-label">Sends To</div>
     <div class="stat-val orange" style="font-size:13px">{notify_email}</div>
-    <div class="stat-sub">via Mail.app + local SMTP</div>
+    <div class="stat-sub">via supportshell SMTP</div>
   </div>
 </div>
 
@@ -830,12 +830,7 @@ def _watchdog_loop():
                     subprocess.run(["launchctl", "start", POLLER_LABEL], capture_output=True, timeout=5)
                     _watchdog_log("✓ Poller plist recreated and started")
 
-            # ── 2. Mail.app ──
-            r = subprocess.run(["pgrep", "-x", "Mail"], capture_output=True, timeout=5)
-            if r.returncode != 0:
-                _watchdog_log("⚠ Mail.app not running — starting...")
-                subprocess.run(["open", "-gja", "Mail"], capture_output=True, timeout=10)
-                _watchdog_log("✓ Mail.app started")
+            # ── 2. Email is supportshell SMTP (no Mail.app required) ──
 
             # ── 3. SSH/GraphQL status (from heartbeat — no slow SSH call) ──
             try:

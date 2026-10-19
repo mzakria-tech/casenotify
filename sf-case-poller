@@ -239,77 +239,49 @@ def _event_hash(case_id: str, event_type: str, old_val: str, new_val: str) -> st
 
 
 # ─── Notifications ─────────────────────────────────────────────────────────
-def _as_escape(s: str) -> str:
-    """Escape for AppleScript string literals; preserve Unicode (no '?' substitution)."""
-    return (
-        s.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\r\n", "\\n")
-        .replace("\n", "\\n")
-        .replace("\r", "\\n")
-    )
-
-
 def _send_smtp(subject: str, body: str) -> bool:
+    """Send email via supportshell → smtp.corp.redhat.com (no local Mail.app)."""
+    if not TO_ADDR:
+        log_warn("smtp_skipped", reason="no_notify_email")
+        return False
+    if not SSH_USER:
+        log_warn("smtp_skipped", reason="no_ssh_user")
+        return False
+    from_addr = TO_ADDR  # envelope/from: user@redhat.com
+    from_hdr = _from_header()  # display: alias <user@redhat.com>
+    # Run SMTP on supportshell (has corp relay); keep payload in JSON for safe quoting
+    payload = json.dumps({
+        "subject": subject,
+        "body": body,
+        "from_hdr": from_hdr,
+        "from_addr": from_addr,
+        "to_addr": TO_ADDR,
+    })
+    script = f'''
+import json, smtplib, sys
+from email.mime.text import MIMEText
+d = json.loads({json.dumps(payload)})
+msg = MIMEText(d["body"], _charset="utf-8")
+msg["Subject"] = d["subject"]
+msg["From"] = d["from_hdr"]
+msg["To"] = d["to_addr"]
+try:
+    with smtplib.SMTP("smtp.corp.redhat.com", 25, timeout=20) as s:
+        s.sendmail(d["from_addr"], [d["to_addr"]], msg.as_string())
+    print("SMTP_OK")
+except Exception as e:
+    print("SMTP_FAIL:" + str(e)[:200])
+    sys.exit(1)
+'''
     try:
-        msg = MIMEText(body, _charset="utf-8")
-        msg["Subject"] = subject
-        msg["From"] = _from_header()
-        msg["To"] = TO_ADDR
-        with smtplib.SMTP("127.0.0.1", 2525, timeout=5) as s:
-            s.send_message(msg)
-        return True
+        out = _ssh_python(script, timeout=35)
+        if "SMTP_OK" in (out or ""):
+            return True
+        log_warn("smtp_failed", error=(out or "empty")[:200])
+        return False
     except Exception as exc:
         log_warn("smtp_failed", error=str(exc)[:120])
         return False
-
-
-def _send_mailapp(subject: str, body: str) -> bool:
-    if not TO_ADDR:
-        return True
-    content = body if body.endswith("\n") else body + "\n"
-    # Pass subject/body via UTF-8 temp files so Unicode (smart quotes, dashes)
-    # is preserved — embedding in the .applescript used to replace non-ASCII with '?'.
-    subj_fd, subj_path = tempfile.mkstemp(suffix=".subj.txt")
-    body_fd, body_path = tempfile.mkstemp(suffix=".body.txt")
-    script_fd, script_path = tempfile.mkstemp(suffix=".applescript")
-    try:
-        with os.fdopen(subj_fd, "w", encoding="utf-8") as fh:
-            fh.write(subject)
-        with os.fdopen(body_fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        safe_to = _as_escape(TO_ADDR)
-        safe_from = _as_escape(_from_header())
-        ascript = f'''
-tell application "System Events" to set mailRunning to (name of processes) contains "Mail"
-if mailRunning is false then
-  tell application "Mail" to activate
-  delay 2
-end if
-set subjText to read POSIX file "{subj_path}" as «class utf8»
-set bodyText to read POSIX file "{body_path}" as «class utf8»
-tell application "Mail"
-  set m to make new outgoing message with properties {{subject:subjText, content:bodyText, visible:false, sender:"{safe_from}"}}
-  tell m
-    make new to recipient at end of to recipients with properties {{address:"{safe_to}"}}
-    send
-  end tell
-end tell
-return "OK"
-'''
-        with os.fdopen(script_fd, "w", encoding="utf-8") as fh:
-            fh.write(ascript)
-        r = subprocess.run(["osascript", script_path], capture_output=True, text=True, timeout=30)
-    finally:
-        for p in (subj_path, body_path, script_path):
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
-    if r.returncode != 0:
-        log_warn("mailapp_failed", error=(r.stderr or r.stdout or "").strip()[:200])
-        return False
-    return True
 
 
 def _send_banner(title: str, body: str):
@@ -331,8 +303,6 @@ def dispatch_notification(conn: sqlite3.Connection, notif_id: int) -> bool:
     ok = False
     if channel == "smtp":
         ok = _send_smtp(subject, body)
-    elif channel == "mailapp":
-        ok = _send_mailapp(subject, body)
     elif channel == "banner":
         _send_banner(subject, body)
         ok = True
@@ -353,7 +323,8 @@ def dispatch_notification(conn: sqlite3.Connection, notif_id: int) -> bool:
 def queue_notification(conn: sqlite3.Connection, event_id: int, subject: str, body: str):
     """Queue notifications across all channels."""
     now = datetime.now(timezone.utc).isoformat()
-    for channel in ("smtp", "mailapp", "banner"):
+    # smtp = supportshell → smtp.corp.redhat.com (no Mail.app / local SMTP)
+    for channel in ("smtp", "banner"):
         conn.execute(
             "INSERT INTO notifications (event_id, channel, subject, body, created_at) VALUES (?,?,?,?,?)",
             (event_id, channel, subject, body, now),
@@ -1579,20 +1550,18 @@ def cmd_health(conn: sqlite3.Connection):
     # GraphQL API (via SSH)
     # Checked below with SSH/GraphQL
 
-    # Mail.app
-    try:
-        r = subprocess.run(["pgrep", "-x", "Mail"], capture_output=True)
-        checks.append(("Mail.app", "PASS" if r.returncode == 0 else "WARN (not running)"))
-    except Exception:
-        checks.append(("Mail.app", "WARN"))
-
-    # SMTP
-    try:
-        with smtplib.SMTP("127.0.0.1", 2525, timeout=3) as s:
-            s.noop()
-        checks.append(("Local SMTP", "PASS"))
-    except Exception:
-        checks.append(("Local SMTP", "FAIL (port 2525)"))
+    # Supportshell SMTP (corp relay)
+    if SSH_USER and not ssh_circuit.is_open:
+        try:
+            probe = _ssh_python(
+                'import smtplib; s=smtplib.SMTP("smtp.corp.redhat.com",25,timeout=10); s.noop(); s.quit(); print("OK")',
+                timeout=20,
+            )
+            checks.append(("Supportshell SMTP", "PASS" if "OK" in (probe or "") else "FAIL"))
+        except Exception:
+            checks.append(("Supportshell SMTP", "FAIL"))
+    else:
+        checks.append(("Supportshell SMTP", "SKIP (no SSH)"))
 
     # SSH + GraphQL
     if ssh_circuit.is_open:
@@ -1649,16 +1618,19 @@ def cmd_health(conn: sqlite3.Connection):
 
 
 def cmd_test_email():
-    """Send a test email through all channels."""
+    """Send a test email via supportshell SMTP + macOS banner."""
     subject = "SF Notify Test"
-    body = f"Test notification from SF Case Notification Center.\nTime: {datetime.now(timezone.utc).isoformat()}\n"
-    print("Sending test email...")
+    body = (
+        f"Test notification from SF Case Notification Center.\n"
+        f"Via: supportshell → smtp.corp.redhat.com\n"
+        f"To: {TO_ADDR}\n"
+        f"Time: {datetime.now(timezone.utc).isoformat()}\n"
+    )
+    print("Sending test email via supportshell SMTP...")
     smtp_ok = _send_smtp(subject, body)
-    print(f"  Local SMTP: {'OK' if smtp_ok else 'FAILED'}")
-    mail_ok = _send_mailapp(subject, body)
-    print(f"  Mail.app:   {'OK' if mail_ok else 'FAILED'}")
+    print(f"  Supportshell SMTP: {'OK' if smtp_ok else 'FAILED'}")
     _send_banner("SF Notify Test", "Test notification")
-    print(f"  Banner:     OK")
+    print("  Banner:            OK")
 
 
 def cmd_history(conn: sqlite3.Connection, limit: int = 20):

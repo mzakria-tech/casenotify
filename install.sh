@@ -227,15 +227,14 @@ if ssh_ok; then
 fi
 
 # ────────────────────────────────────────────────────────────────
-step "2/5" "Clean broken agents + Mail.app setup (waits until ready)"
+step "2/5" "Clean broken agents (email = supportshell SMTP, no Mail.app)"
 # ────────────────────────────────────────────────────────────────
 
 if [ "$IS_MAC" -eq 1 ]; then
     _sf_clean_agents
-    _sf_wait_for_mail
-    ok "Mail.app setup complete — continuing"
+    ok "Stale LaunchAgents cleared — mail will use supportshell SMTP"
 else
-    ok "Linux: Mail.app not required"
+    ok "Linux: no LaunchAgents to clean"
 fi
 
 # ────────────────────────────────────────────────────────────────
@@ -272,10 +271,9 @@ if [ "$IS_MAC" -eq 1 ]; then
 PLISTEOF
     if _sf_launch_start "$MAILER_LABEL" "$LAUNCH_DIR/$MAILER_LABEL.plist"; then
         _sf_wait_for_port 8090 "Dashboard" || true
-        _sf_wait_for_port 2525 "Local SMTP" || true
-        ok "Dashboard + local SMTP started"
+        ok "Dashboard started (port 8090) — email uses supportshell SMTP"
     else
-        fail "Could not start mail server LaunchAgent"
+        fail "Could not start dashboard LaunchAgent"
         exit 1
     fi
 
@@ -383,7 +381,7 @@ echo -e "${G}╔═════════════════════�
 echo -e "${G}║  ${BOLD}✅ Installation complete!${N}${G}                              ║${N}"
 echo -e "${G}║                                                       ║${N}"
 echo -e "${G}║  Dashboard:   ${BOLD}http://localhost:8090${N}${G}                    ║${N}"
-echo -e "${G}║  Email:       ${BOLD}Mail.app (waits until account ready)${N}${G}      ║${N}"
+echo -e "${G}║  Email:       ${BOLD}supportshell → smtp.corp.redhat.com${N}${G}     ║${N}"
 echo -e "${G}║  Uninstall:   ${BOLD}./install.sh uninstall${N}${G}                   ║${N}"
 echo -e "${G}║                                                       ║${N}"
 echo -e "${G}║  Data source: Red Hat GraphQL API (no browser needed) ║${N}"
