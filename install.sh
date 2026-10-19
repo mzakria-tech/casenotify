@@ -243,6 +243,15 @@ while ! ssh_ok; do
 done
 ok "SSH ready — application will run automatically from here"
 
+# GraphQL needs OIDC on supportshell — run yank --init if missing/expired
+step "1c/4" "Supportshell OIDC token (yank --init if needed)"
+if ! _sf_ensure_yank_token "$SSH_HOST"; then
+    fail "OIDC token required for GraphQL case discovery"
+    echo -e "    ${Y}VPN on → ssh $SSH_HOST → yank --init → re-run ./install.sh${N}"
+    exit 1
+fi
+ok "Supportshell GraphQL token ready"
+
 # Pre-warm SSH + first poll in background (runs during service startup)
 if ssh_ok; then
     (ssh -o ControlMaster=yes -o ControlPath="$SSH_CTRL" \

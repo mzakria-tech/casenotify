@@ -30,12 +30,30 @@ fi
 source "$REPO_DIR/sf-service-lib.sh"
 
 BIN_DIR="$HOME/.local/bin"
-mkdir -p "$BIN_DIR" "$HOME/.local/state" "$HOME/Library/Logs" "$HOME/Library/LaunchAgents"
+STATE_DIR="$HOME/.local/state"
+mkdir -p "$BIN_DIR" "$STATE_DIR" "$HOME/Library/Logs" "$HOME/Library/LaunchAgents"
 cp "$REPO_DIR/sf-case-poller" "$BIN_DIR/sf-case-poller"
 cp "$REPO_DIR/local-mailserver" "$BIN_DIR/local-mailserver"
 chmod +x "$BIN_DIR/sf-case-poller" "$BIN_DIR/local-mailserver"
 [ -f "$REPO_DIR/sf-ssh-setup" ] && cp "$REPO_DIR/sf-ssh-setup" "$BIN_DIR/sf-ssh-setup" && chmod +x "$BIN_DIR/sf-ssh-setup"
 echo -e "  ${G}✓${N} binaries synced → $BIN_DIR"
+
+# Resolve supportshell user from config (same as install.sh)
+CFG="$STATE_DIR/sf-poller-config.json"
+USER_NAME="${USER:-$(whoami)}"
+SSH_USER="$USER_NAME"
+if [ -f "$CFG" ]; then
+    SSH_USER=$(python3 -c "import json; print(json.load(open('$CFG')).get('supportshell_user','$USER_NAME'))" 2>/dev/null || echo "$USER_NAME")
+fi
+SSH_HOST="${SSH_USER}@supportshell-1.sush-001.prod.us-west-2.aws.redhat.com"
+
+echo "→ Ensuring yank OIDC token on $SSH_HOST"
+if ! _sf_ensure_yank_token "$SSH_HOST"; then
+    echo -e "  ${Y}⚠ Fix token, then re-run: ./update.sh${N}"
+    echo -e "    ssh $SSH_HOST"
+    echo -e "    yank --init"
+    exit 1
+fi
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
     _sf_clean_agents
@@ -69,8 +87,9 @@ echo ""
 echo -e "${Y}╔═══════════════════════════════════════════════╗${N}"
 echo -e "${Y}║  Discovery not OK yet                         ║${N}"
 echo -e "${Y}║  1) Connect Red Hat VPN                       ║${N}"
-echo -e "${Y}║  2) ./install.sh   (fixes SSH / token)        ║${N}"
-echo -e "${Y}║  3) ./update.sh    (re-run this)              ║${N}"
+echo -e "${Y}║  2) ssh $SSH_HOST                             ║${N}"
+echo -e "${Y}║     yank --init                               ║${N}"
+echo -e "${Y}║  3) ./update.sh                               ║${N}"
 echo -e "${Y}║  Log: ~/Library/Logs/sf-case-poller.log       ║${N}"
 echo -e "${Y}╚═══════════════════════════════════════════════╝${N}"
 exit "${RC:-1}"

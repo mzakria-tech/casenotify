@@ -50,6 +50,7 @@ SUPPORTSHELL_HOST = os.environ.get(
 HEAL_CMD = (
     os.environ.get("SF_NOTIFY_HEAL_CMD")
     or 'cd ~/Desktop/sf-notification-center && ./update.sh'
+    # update.sh runs yank --init on supportshell when OIDC token is missing
 ).strip()
 
 

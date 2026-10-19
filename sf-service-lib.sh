@@ -291,3 +291,66 @@ _sf_wait_for_port() {
     echo "  ⚠ $name not listening on :$port yet"
     return 1
 }
+
+# Ensure supportshell has a usable OIDC token for GraphQL (yank --init device flow).
+# Args: SSH_HOST (e.g. kalb@supportshell-1....)
+# Interactive: prints browser URL; user must complete device login.
+_sf_ensure_yank_token() {
+    local ssh_host="${1:-}"
+    if [ -z "$ssh_host" ]; then
+        echo "  ✗ _sf_ensure_yank_token: SSH host required"
+        return 1
+    fi
+
+    echo "→ Checking supportshell OIDC token (yank / hydra-mcp)..."
+    local check
+    check=$(ssh -o BatchMode=yes -o ConnectTimeout=12 "$ssh_host" '
+        ok=0
+        for f in "$HOME/.cache/hydra-mcp/tokens/redhat-sso-token.json" "$HOME/.yank/oidc-tokens.json"; do
+            [ -f "$f" ] || continue
+            python3 -c "
+import json,urllib.request,urllib.parse,sys
+p=sys.argv[1]
+d=json.load(open(p))
+rt=d.get(\"refresh_token\") or \"\"
+if not rt: sys.exit(2)
+body=urllib.parse.urlencode({\"grant_type\":\"refresh_token\",\"refresh_token\":rt,\"client_id\":\"cee-supportshell-deviceauth\"}).encode()
+urllib.request.urlopen(urllib.request.Request(
+  \"https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token\", body), timeout=15)
+" "$f" 2>/dev/null && ok=1 && echo "TOKEN_OK:$f" && break
+        done
+        [ "$ok" = 1 ] || echo "TOKEN_MISSING"
+    ' 2>/dev/null) || true
+
+    if echo "$check" | grep -q 'TOKEN_OK:'; then
+        echo "  ✓ OIDC token OK ($(echo "$check" | sed -n 's/TOKEN_OK://p'))"
+        return 0
+    fi
+
+    echo ""
+    echo "  ⚠ No valid OIDC token on supportshell — running yank --init"
+    echo "  A device-login URL will appear below. Open it in your browser,"
+    echo "  complete Red Hat SSO, then wait until this finishes."
+    echo ""
+    # -t allocates a TTY so yank can print the device URL and wait
+    if ssh -t -o ConnectTimeout=15 "$ssh_host" 'yank --init'; then
+        echo "  ✓ yank --init completed"
+    else
+        echo "  ✗ yank --init failed or was cancelled"
+        echo "    Manual:  ssh $ssh_host"
+        echo "             yank --init"
+        return 1
+    fi
+
+    # Re-check
+    check=$(ssh -o BatchMode=yes -o ConnectTimeout=12 "$ssh_host" '
+        test -f ~/.yank/oidc-tokens.json && echo YANK_OK
+        test -f ~/.cache/hydra-mcp/tokens/redhat-sso-token.json && echo HYDRA_OK
+    ' 2>/dev/null) || true
+    if echo "$check" | grep -qE 'YANK_OK|HYDRA_OK'; then
+        echo "  ✓ Token file present after yank --init"
+        return 0
+    fi
+    echo "  ✗ Token still missing after yank --init"
+    return 1
+}
