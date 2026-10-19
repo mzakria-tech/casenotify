@@ -1,113 +1,88 @@
 # SF Notification Center
 
-Salesforce case status monitor for Red Hat OpenShift Support engineers.  
-Polls your Salesforce case list view every 5 minutes, sends email alerts on status changes, and shows a live web dashboard.
+Salesforce case monitor for Red Hat OpenShift Support engineers.  
+Polls your open cases via Red Hat GraphQL (supportshell), emails on status/comment changes.
 
-![Dashboard](https://img.shields.io/badge/Dashboard-localhost:8090-blue) ![macOS](https://img.shields.io/badge/macOS-only-lightgrey)
+No Chrome scraping, no Mail.app, no local web dashboard.
 
 ## Features
 
-- **Real-time case tracking** — Monitors your Salesforce cases via Chrome browser automation
-- **Email alerts** — Sends to your email via Mail.app when a case status changes
-- **macOS notifications** — Desktop banners on status changes
-- **Web dashboard** — Colorful live dashboard at `http://localhost:8090`
-  - Service health (Chrome, Mail.app, Poller, Mail Server)
-  - One-click start buttons for stopped services
-  - Tracked cases table with status, severity, owner, contact
-  - Email notification log
-  - Activity log
-  - Settings panel to change the monitored list view URL
+- **GraphQL case tracking** — open cases via supportshell OIDC (`yank --init`)
+- **Email alerts** — supportshell → `smtp.corp.redhat.com`
+- **macOS banners** — desktop notification on changes
+- **LaunchAgent** — runs in the background every ~60s
 
 ## Prerequisites
 
-- **macOS** (uses LaunchAgents, AppleScript, Mail.app)
-- **Google Chrome** — logged into Red Hat Salesforce (`redhatsupport.lightning.force.com`)
-- **Chrome setting**: View → Developer → Allow JavaScript from Apple Events ✓
-- **Mail.app** — configured with your email account
-- **Python 3** with `aiosmtpd` (`pip3 install aiosmtpd`)
+- **macOS** (LaunchAgents) or Linux (systemd user)
+- **Red Hat VPN**
+- **Python 3**
+- **SSH** to supportshell + OIDC (`yank --init`, auto-opened in Chrome on install)
 
-## Quick Start
+## Fresh computer
 
 ```bash
-# Install (first time — VPN on; may ask RH password once for SSH)
-chmod +x install.sh start.sh stop.sh uninstall.sh update.sh
+# VPN on
+cd ~/Desktop
+git clone https://github.com/mzakria-tech/sf-notification-center.git
+cd sf-notification-center
+chmod +x install.sh update.sh start.sh stop.sh
 ./install.sh
-
-# Start all services
-./start.sh
-
-# Open dashboard
-open http://localhost:8090
 ```
 
-## Update / heal (any laptop after git pull)
+`./install.sh` sets up SSH (password once if needed), runs `yank --init` (opens Chrome for SSO), and starts the poller.
 
-GraphQL 400 / `DISCOVERY_FAILED` / stale heartbeat — one command from the repo:
+## Update / heal
 
 ```bash
-cd ~/Desktop/sf-notification-center   # or your clone path
+cd ~/Desktop/sf-notification-center
 ./update.sh
 ```
-
-That runs: `git pull` → sync `~/.local/bin` → **`yank --init` on supportshell if OIDC missing** → restart LaunchAgents → `sf-case-poller --once`.  
-Same heal command is printed in the poller log and dashboard when discovery fails.
-
-First-time GraphQL auth: `./install.sh` / `./update.sh` run `yank --init` and **auto-open the device URL in Chrome**. Complete Red Hat SSO in that tab, then wait for the script to finish.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `./install.sh` | Install scripts, dependencies, and LaunchAgents |
-| `./update.sh` | Pull latest, sync binaries, restart, verify GraphQL |
-| `./start.sh` | Sync binaries from this repo + start services |
-| `./stop.sh` | Stop all services |
-| `./uninstall.sh` | Remove everything |
+| `./install.sh` | Install poller + LaunchAgent |
+| `./update.sh` | Pull, sync, yank token if needed, verify |
+| `./start.sh` | Sync binaries + start poller |
+| `./stop.sh` | Stop poller (also removes legacy dashboard) |
+| `./install.sh uninstall` | Remove everything |
+| `sf-case-poller status` | Status |
+| `sf-case-poller --test-email` | Send a test email |
+| `sf-case-poller health` | Health check |
 
 ## Configuration
 
-### Change monitored list view
+Edit `~/.local/state/sf-poller-config.json`:
 
-**Option 1 — Dashboard**: Open `http://localhost:8090`, scroll to ⚙️ Monitor Settings, paste a new URL, click Save.
-
-**Option 2 — Environment variable**:
-```bash
-export SF_CASE_LIST_URL="https://redhatsupport.lightning.force.com/lightning/o/Case/list?filterName=YourView"
-```
-
-**Option 3 — Config file** (`~/.local/state/sf-poller-config.json`):
 ```json
-{ "case_list_url": "https://redhatsupport.lightning.force.com/lightning/o/Case/list?filterName=YourView" }
+{
+  "notify_email": "you@redhat.com",
+  "supportshell_user": "your-rh-username"
+}
 ```
 
-### Change poll interval
-
-Set `SF_POLL_INTERVAL` in the LaunchAgent plist (default: 300 seconds = 5 min).
-
-### Change notification email
-
-Set during `./install.sh` or edit `~/.local/state/sf-poller-config.json`.
+Optional: `SF_POLL_INTERVAL` (seconds, default via LaunchAgent is 60).
 
 ## Architecture
 
 ```
-Chrome (Salesforce)  →  AppleScript JS  →  sf-case-poller  →  Mail.app (email)
-                                                ↓                    ↓
-                                         State JSON           local-mailserver
-                                                                (SMTP + Web UI)
-                                                              localhost:8090
+GraphQL (vpn.graphql.redhat.com via supportshell SSH)
+        → sf-case-poller
+        → supportshell SMTP → your inbox
+        → macOS banner
 ```
 
-## File Locations
+## File locations
 
 | File | Path |
 |------|------|
-| Poller script | `~/.local/bin/sf-case-poller` |
-| Dashboard script | `~/.local/bin/local-mailserver` |
-| Case state | `~/.local/state/sf-case-status.json` |
+| Poller | `~/.local/bin/sf-case-poller` |
 | Config | `~/.local/state/sf-poller-config.json` |
-| Poller log | `~/Library/Logs/sf-case-poller.log` |
-| LaunchAgents | `~/Library/LaunchAgents/com.sf-notify.case-poller.plist` |
+| State / DB | `~/.local/state/sf-notification-center.db` |
+| Log | `~/Library/Logs/sf-case-poller.log` |
+| LaunchAgent | `~/Library/LaunchAgents/com.$USER.sf-case-poller.plist` |
 
 ## Author
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stop all SF Notification Center services
+# Stop SF Notification Center services
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=sf-service-lib.sh
@@ -13,10 +13,13 @@ LAUNCH_DIR="$HOME/Library/LaunchAgents"
 
 _sf_launch_stop "$POLLER_LABEL" "$LAUNCH_DIR/${POLLER_LABEL}.plist"
 echo "→ SF Case Poller stopped"
+# Legacy dashboard cleanup (removed from product)
 _sf_launch_stop "$MAILER_LABEL" "$LAUNCH_DIR/${MAILER_LABEL}.plist"
-echo "→ Mail Server + Dashboard stopped"
+_sf_launch_stop "com.mzakria.local-mailserver" "$LAUNCH_DIR/com.mzakria.local-mailserver.plist"
+rm -f "$LAUNCH_DIR/${MAILER_LABEL}.plist" "$LAUNCH_DIR/com.mzakria.local-mailserver.plist"
 pkill -f "local-mailserver" 2>/dev/null || true
 pkill -f "sf-case-poller.*poll" 2>/dev/null || true
+rm -f "$HOME/.local/bin/local-mailserver"
 
 echo ""
 echo "All services stopped."

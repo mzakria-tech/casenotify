@@ -25,7 +25,7 @@ _sf_clean_agents() {
         "com.${user}.sf-case-poller"
         "com.${user}.local-mailserver"
     )
-    # Also clear legacy mzakria-labeled agents if someone copied another Mac's plists
+    # Also clear legacy mzakria-labeled agents / old dashboard if present
     labels+=("com.mzakria.sf-case-poller" "com.mzakria.local-mailserver")
 
     echo "→ Cleaning LaunchAgents for user '${user}' (self-heal)..."
@@ -36,9 +36,14 @@ _sf_clean_agents() {
         launchctl bootout "$domain" "$plist" 2>/dev/null || true
         launchctl unload "$plist" 2>/dev/null || true
         launchctl remove "$label" 2>/dev/null || true
+        # Drop legacy dashboard plists (product no longer ships a web UI)
+        case "$label" in
+            *local-mailserver*) rm -f "$plist" ;;
+        esac
     done
     pkill -f "local-mailserver" 2>/dev/null || true
     pkill -f "sf-case-poller.*poll" 2>/dev/null || true
+    rm -f "$HOME/.local/bin/local-mailserver"
     sleep 1
     echo "  ✓ Stale agents cleared"
 }
@@ -53,7 +58,6 @@ _sf_ensure_plists() {
     local python
     python="$(command -v python3 || echo /usr/bin/python3)"
     local poller_label="com.${user}.sf-case-poller"
-    local mailer_label="com.${user}.local-mailserver"
     local ssh_sock="${SSH_AUTH_SOCK:-}"
     [ -z "$ssh_sock" ] && ssh_sock=$(ls /private/tmp/com.apple.launchd.*/Listeners 2>/dev/null | head -1 || echo "")
 
@@ -66,13 +70,13 @@ _sf_ensure_plists() {
         cp "$repo/sf-case-poller" "$bin/sf-case-poller"
         chmod +x "$bin/sf-case-poller"
     fi
-    if [ -f "$repo/local-mailserver" ]; then
-        cp "$repo/local-mailserver" "$bin/local-mailserver"
-        chmod +x "$bin/local-mailserver"
-    fi
+    # Remove legacy dashboard binary if left over from older installs
+    rm -f "$bin/local-mailserver" \
+        "$launch/com.${user}.local-mailserver.plist" \
+        "$launch/com.mzakria.local-mailserver.plist"
 
-    if [ ! -f "$bin/sf-case-poller" ] || [ ! -f "$bin/local-mailserver" ]; then
-        echo "  ✗ Scripts missing in $bin — run: cd <repo> && ./install.sh"
+    if [ ! -f "$bin/sf-case-poller" ]; then
+        echo "  ✗ sf-case-poller missing in $bin — run: cd <repo> && ./install.sh"
         return 1
     fi
 
@@ -86,28 +90,6 @@ _sf_ensure_plists() {
 }
 EOF
     fi
-
-    cat > "$launch/${mailer_label}.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key><string>${mailer_label}</string>
-    <key>ProgramArguments</key>
-    <array><string>${python}</string><string>${bin}/local-mailserver</string></array>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>HOME</key><string>${home}</string>
-        <key>USER</key><string>${user}</string>
-        <key>SSH_AUTH_SOCK</key><string>${ssh_sock}</string>
-    </dict>
-    <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>/tmp/local-mailserver.log</string>
-    <key>StandardErrorPath</key><string>/tmp/local-mailserver.log</string>
-</dict>
-</plist>
-EOF
 
     cat > "$launch/${poller_label}.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -152,8 +134,7 @@ _sf_launch_start() {
         _sf_launch_stop "$label" "$plist"
         # Kill leftover processes for this agent
         case "$label" in
-            *local-mailserver*) pkill -f "local-mailserver" 2>/dev/null || true ;;
-            *sf-case-poller*)   pkill -f "sf-case-poller.*poll" 2>/dev/null || true ;;
+            *sf-case-poller*) pkill -f "sf-case-poller.*poll" 2>/dev/null || true ;;
         esac
         sleep 1
 
