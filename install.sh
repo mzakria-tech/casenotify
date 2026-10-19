@@ -251,6 +251,7 @@ if [ "$IS_MAC" -eq 1 ]; then
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key><string>$HOME_DIR</string>
+        <key>USER</key><string>$USER_NAME</string>
         <key>SSH_AUTH_SOCK</key><string>$SSH_SOCK</string>
     </dict>
     <key>RunAtLoad</key><true/>
@@ -277,6 +278,7 @@ PLISTEOF
     <dict>
         <key>SF_POLL_INTERVAL</key><string>60</string>
         <key>HOME</key><string>$HOME_DIR</string>
+        <key>USER</key><string>$USER_NAME</string>
         <key>SSH_AUTH_SOCK</key><string>$SSH_SOCK</string>
     </dict>
     <key>KeepAlive</key><true/>

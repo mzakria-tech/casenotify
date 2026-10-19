@@ -72,6 +72,34 @@ CASE_LIST_URL = _cfg("case_list_url", "SF_CASE_LIST_URL")
 TO_ADDR = _cfg("notify_email", "SF_NOTIFY_EMAIL")
 SSH_USER = _cfg("supportshell_user", "SUPPORTSHELL_USER") or os.environ.get("USER", "")
 
+
+def _from_alias() -> str:
+    """Short From display name for whoever runs this laptop — never full legal name.
+
+    Per-machine: uses that laptop's login / supportshell user (e.g. mzakria),
+    not a hardcoded personal name.
+    """
+    login = os.environ.get("USER") or ""
+    if not login:
+        try:
+            import pwd
+            login = pwd.getpwuid(os.getuid()).pw_name
+        except Exception:
+            login = ""
+    return (
+        _cfg("notify_from_alias", "SF_NOTIFY_FROM_ALIAS")
+        or SSH_USER
+        or login
+        or (TO_ADDR.split("@")[0] if TO_ADDR and "@" in TO_ADDR else "")
+        or "sf-notify"
+    )
+
+
+def _from_header() -> str:
+    """From header with short alias, e.g. mzakria <mzakria@redhat.com>."""
+    addr = TO_ADDR or "sf-notify@localhost"
+    return f"{_from_alias()} <{addr}>"
+
 # ─── Structured Logging ────────────────────────────────────────────────────
 def log(level: str, msg: str, **kv) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -226,7 +254,7 @@ def _send_smtp(subject: str, body: str) -> bool:
     try:
         msg = MIMEText(body, _charset="utf-8")
         msg["Subject"] = subject
-        msg["From"] = "sf-notify@localhost"
+        msg["From"] = _from_header()
         msg["To"] = TO_ADDR
         with smtplib.SMTP("127.0.0.1", 2525, timeout=5) as s:
             s.send_message(msg)
@@ -251,6 +279,7 @@ def _send_mailapp(subject: str, body: str) -> bool:
         with os.fdopen(body_fd, "w", encoding="utf-8") as fh:
             fh.write(content)
         safe_to = _as_escape(TO_ADDR)
+        safe_from = _as_escape(_from_header())
         ascript = f'''
 tell application "System Events" to set mailRunning to (name of processes) contains "Mail"
 if mailRunning is false then
@@ -260,7 +289,7 @@ end if
 set subjText to read POSIX file "{subj_path}" as «class utf8»
 set bodyText to read POSIX file "{body_path}" as «class utf8»
 tell application "Mail"
-  set m to make new outgoing message with properties {{subject:subjText, content:bodyText, visible:false}}
+  set m to make new outgoing message with properties {{subject:subjText, content:bodyText, visible:false, sender:"{safe_from}"}}
   tell m
     make new to recipient at end of to recipients with properties {{address:"{safe_to}"}}
     send
