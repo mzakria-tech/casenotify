@@ -292,9 +292,61 @@ _sf_wait_for_port() {
     return 1
 }
 
+# Open Red Hat device-login URL in Chrome (macOS) or default browser.
+_sf_open_sso_device_url() {
+    local url="$1"
+    [ -n "$url" ] || return 1
+    echo "  → Opening Chrome for device login:"
+    echo "    $url"
+    case "$(uname -s)" in
+        Darwin)
+            open -a "Google Chrome" "$url" 2>/dev/null \
+                || open -a "Chromium" "$url" 2>/dev/null \
+                || open "$url" 2>/dev/null \
+                || true
+            ;;
+        *)
+            xdg-open "$url" 2>/dev/null || true
+            ;;
+    esac
+}
+
+# Run yank --init over SSH; when the device URL appears, open it in Chrome.
+# Waits until yank exits (user finishes SSO in the browser).
+_sf_yank_init_open_chrome() {
+    local ssh_host="$1"
+    local log opened url ssh_pid rc
+    log="$(mktemp "${TMPDIR:-/tmp}/sf-yank-init.XXXXXX")"
+    opened=0
+    : >"$log"
+
+    # -tt: force PTY so yank prints the device URL promptly
+    ssh -tt -o ConnectTimeout=15 -o ServerAliveInterval=30 "$ssh_host" 'yank --init' \
+        > >(tee -a "$log") 2>&1 &
+    ssh_pid=$!
+
+    while kill -0 "$ssh_pid" 2>/dev/null; do
+        if [ "$opened" -eq 0 ]; then
+            url="$(grep -oE 'https://sso\.redhat\.com/device[^[:space:]]*' "$log" 2>/dev/null | head -1 || true)"
+            if [ -n "$url" ]; then
+                _sf_open_sso_device_url "$url"
+                opened=1
+            fi
+        fi
+        sleep 0.4
+    done
+
+    set +e
+    wait "$ssh_pid"
+    rc=$?
+    set -e
+    rm -f "$log"
+    return "$rc"
+}
+
 # Ensure supportshell has a usable OIDC token for GraphQL (yank --init device flow).
 # Args: SSH_HOST (e.g. kalb@supportshell-1....)
-# Interactive: prints browser URL; user must complete device login.
+# Interactive: auto-opens device URL in Chrome; user completes SSO in the browser.
 _sf_ensure_yank_token() {
     local ssh_host="${1:-}"
     if [ -z "$ssh_host" ]; then
@@ -329,18 +381,18 @@ urllib.request.urlopen(urllib.request.Request(
 
     echo ""
     echo "  ⚠ No valid OIDC token on supportshell — running yank --init"
-    echo "  A device-login URL will appear below. Open it in your browser,"
-    echo "  complete Red Hat SSO, then wait until this finishes."
+    echo "  Will auto-open the device URL in Chrome; complete Red Hat SSO there,"
+    echo "  then wait here until yank finishes."
     echo ""
-    # -t allocates a TTY so yank can print the device URL and wait
-    if ssh -t -o ConnectTimeout=15 "$ssh_host" 'yank --init'; then
-        echo "  ✓ yank --init completed"
-    else
+    # Stream yank output, detect device URL, open Chrome automatically
+    if ! _sf_yank_init_open_chrome "$ssh_host"; then
         echo "  ✗ yank --init failed or was cancelled"
         echo "    Manual:  ssh $ssh_host"
         echo "             yank --init"
+        echo "    Then open the printed https://sso.redhat.com/device?... URL in Chrome"
         return 1
     fi
+    echo "  ✓ yank --init completed"
 
     # Re-check
     check=$(ssh -o BatchMode=yes -o ConnectTimeout=12 "$ssh_host" '

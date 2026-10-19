@@ -52,7 +52,7 @@ cd ~/Desktop/sf-notification-center   # or your clone path
 That runs: `git pull` → sync `~/.local/bin` → **`yank --init` on supportshell if OIDC missing** → restart LaunchAgents → `sf-case-poller --once`.  
 Same heal command is printed in the poller log and dashboard when discovery fails.
 
-First-time GraphQL auth: `./install.sh` / `./update.sh` open the device-login URL (`yank --init`). Complete SSO in the browser, then wait for the script to finish.
+First-time GraphQL auth: `./install.sh` / `./update.sh` run `yank --init` and **auto-open the device URL in Chrome**. Complete Red Hat SSO in that tab, then wait for the script to finish.
 
 ## Commands
 
