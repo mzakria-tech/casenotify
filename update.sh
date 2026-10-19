@@ -1,7 +1,7 @@
 #!/bin/bash
 # ╔═══════════════════════════════════════════════════════════════╗
 # ║  SF Notification Center — one-command update / heal          ║
-# ║  git pull → sync binaries → yank token → restart → verify    ║
+# ║  git pull → sync binaries → restart agents → verify GraphQL  ║
 # ║  Usage (any laptop):  ./update.sh                            ║
 # ╚═══════════════════════════════════════════════════════════════╝
 set -e
@@ -33,9 +33,9 @@ BIN_DIR="$HOME/.local/bin"
 STATE_DIR="$HOME/.local/state"
 mkdir -p "$BIN_DIR" "$STATE_DIR" "$HOME/Library/Logs" "$HOME/Library/LaunchAgents"
 cp "$REPO_DIR/sf-case-poller" "$BIN_DIR/sf-case-poller"
-chmod +x "$BIN_DIR/sf-case-poller"
+cp "$REPO_DIR/local-mailserver" "$BIN_DIR/local-mailserver"
+chmod +x "$BIN_DIR/sf-case-poller" "$BIN_DIR/local-mailserver"
 [ -f "$REPO_DIR/sf-ssh-setup" ] && cp "$REPO_DIR/sf-ssh-setup" "$BIN_DIR/sf-ssh-setup" && chmod +x "$BIN_DIR/sf-ssh-setup"
-rm -f "$BIN_DIR/local-mailserver"
 echo -e "  ${G}✓${N} binaries synced → $BIN_DIR"
 
 # Resolve supportshell user from config (same as install.sh)
@@ -59,11 +59,14 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     _sf_clean_agents
     _sf_ensure_plists || exit 1
     POLLER_LABEL="com.${USER}.sf-case-poller"
+    MAILER_LABEL="com.${USER}.local-mailserver"
     LAUNCH_DIR="$HOME/Library/LaunchAgents"
+    _sf_launch_start "$MAILER_LABEL" "$LAUNCH_DIR/${MAILER_LABEL}.plist" || true
     _sf_launch_start "$POLLER_LABEL" "$LAUNCH_DIR/${POLLER_LABEL}.plist" || true
+    _sf_wait_for_port 8090 "Dashboard" || true
 fi
 
-# 3) Immediate GraphQL poll
+# 3) Immediate GraphQL poll (surfaces 400 / DISCOVERY_FAILED right here)
 echo "→ verifying GraphQL discovery (sf-case-poller --once)"
 PYTHON="$(command -v python3 || echo /usr/bin/python3)"
 set +e
@@ -75,7 +78,7 @@ if echo "$OUT" | grep -q "status=OK"; then
     echo ""
     echo -e "${G}╔═══════════════════════════════════════════════╗${N}"
     echo -e "${G}║  ✅ Update OK — GraphQL discovery healthy     ║${N}"
-    echo -e "${G}║  Email: supportshell SMTP                     ║${N}"
+    echo -e "${G}║  Dashboard: http://localhost:8090             ║${N}"
     echo -e "${G}╚═══════════════════════════════════════════════╝${N}"
     exit 0
 fi

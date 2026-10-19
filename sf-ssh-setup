@@ -77,7 +77,7 @@ if ssh_ok; then
     launchctl start "$LABEL" 2>/dev/null || true
     # also run one poll now
     python3 "$HOME/.local/bin/sf-case-poller" --once 2>/dev/null || true
-    ok "Done. Check: sf-case-poller status"
+    ok "Done. Open http://localhost:8090"
     exit 0
 fi
 

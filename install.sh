@@ -123,13 +123,28 @@ if ! command -v ssh >/dev/null 2>&1; then
     exit 1
 fi
 
+# aiosmtpd is only needed for the local dashboard SMTP catcher — never abort install
+if ! "$PYTHON" -c "import aiosmtpd" 2>/dev/null; then
+    warn "Installing aiosmtpd (dashboard)..."
+    set +e
+    "$PYTHON" -m pip install --user --quiet aiosmtpd 2>/tmp/sf-pip.err \
+        || pip3 install --user --quiet aiosmtpd 2>>/tmp/sf-pip.err \
+        || "$PYTHON" -m pip install --break-system-packages --user --quiet aiosmtpd 2>>/tmp/sf-pip.err
+    set -e
+    if ! "$PYTHON" -c "import aiosmtpd" 2>/dev/null; then
+        warn "aiosmtpd not installed — dashboard may fail; email still works via supportshell SMTP"
+        cat /tmp/sf-pip.err 2>/dev/null | sed 's/^/    /' | head -5 || true
+    else
+        ok "aiosmtpd installed"
+    fi
+fi
+
 mkdir -p "$BIN_DIR" "$STATE_DIR" "$LOG_DIR" "$LAUNCH_DIR"
 cp "$REPO_DIR/sf-case-poller" "$BIN_DIR/sf-case-poller"
+cp "$REPO_DIR/local-mailserver" "$BIN_DIR/local-mailserver"
 cp "$REPO_DIR/sf-ssh-setup" "$BIN_DIR/sf-ssh-setup" 2>/dev/null || true
-chmod +x "$BIN_DIR/sf-case-poller"
+chmod +x "$BIN_DIR/sf-case-poller" "$BIN_DIR/local-mailserver"
 [ -f "$BIN_DIR/sf-ssh-setup" ] && chmod +x "$BIN_DIR/sf-ssh-setup"
-# Remove legacy local dashboard (no longer shipped)
-rm -f "$BIN_DIR/local-mailserver"
 
 # Add to PATH in shell rc
 SHELL_RC="$HOME_DIR/.bashrc"
@@ -257,19 +272,44 @@ else
 fi
 
 # ────────────────────────────────────────────────────────────────
-step "3/4" "Starting services"
+step "3/5" "Starting services"
 # ────────────────────────────────────────────────────────────────
 
 if [ "$IS_MAC" -eq 1 ]; then
-    # ── macOS: LaunchAgents (poller only — no local web dashboard) ──
+    # ── macOS: LaunchAgents ──
     mkdir -p "$LAUNCH_DIR"
 
     SSH_SOCK="${SSH_AUTH_SOCK:-}"
     [ -z "$SSH_SOCK" ] && SSH_SOCK=$(ls /private/tmp/com.apple.launchd.*/Listeners 2>/dev/null | head -1 || echo "")
 
-    # Ensure legacy dashboard agent is gone
-    _sf_launch_stop "$MAILER_LABEL" "$LAUNCH_DIR/$MAILER_LABEL.plist"
-    rm -f "$LAUNCH_DIR/$MAILER_LABEL.plist" "$LAUNCH_DIR/com.mzakria.local-mailserver.plist"
+    cat > "$LAUNCH_DIR/$MAILER_LABEL.plist" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>$MAILER_LABEL</string>
+    <key>ProgramArguments</key>
+    <array><string>$PYTHON</string><string>$BIN_DIR/local-mailserver</string></array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key><string>$HOME_DIR</string>
+        <key>USER</key><string>$USER_NAME</string>
+        <key>SSH_AUTH_SOCK</key><string>$SSH_SOCK</string>
+    </dict>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>StandardOutPath</key><string>/tmp/local-mailserver.log</string>
+    <key>StandardErrorPath</key><string>/tmp/local-mailserver.log</string>
+</dict>
+</plist>
+PLISTEOF
+    if _sf_launch_start "$MAILER_LABEL" "$LAUNCH_DIR/$MAILER_LABEL.plist"; then
+        _sf_wait_for_port 8090 "Dashboard" || true
+        ok "Dashboard started (port 8090) — email uses supportshell SMTP"
+    else
+        fail "Could not start dashboard LaunchAgent"
+        exit 1
+    fi
 
     cat > "$LAUNCH_DIR/$POLLER_LABEL.plist" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -305,14 +345,27 @@ else
     mkdir -p "$SYSTEMD_DIR"
     pkill -f "local-mailserver" 2>/dev/null || true
     pkill -f "sf-case-poller.*poll" 2>/dev/null || true
-    systemctl --user stop sf-mailserver 2>/dev/null || true
-    systemctl --user disable sf-mailserver 2>/dev/null || true
-    rm -f "$SYSTEMD_DIR/sf-mailserver.service"
+
+    cat > "$SYSTEMD_DIR/sf-mailserver.service" <<SVCEOF
+[Unit]
+Description=SF Notification Center Dashboard + SMTP
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$PYTHON $BIN_DIR/local-mailserver
+Restart=always
+RestartSec=5
+Environment=HOME=$HOME_DIR
+
+[Install]
+WantedBy=default.target
+SVCEOF
 
     cat > "$SYSTEMD_DIR/sf-case-poller.service" <<SVCEOF
 [Unit]
 Description=SF Case Poller (GraphQL via supportshell)
-After=network.target
+After=network.target sf-mailserver.service
 
 [Service]
 Type=simple
@@ -327,8 +380,10 @@ WantedBy=default.target
 SVCEOF
 
     systemctl --user daemon-reload
-    systemctl --user enable sf-case-poller
+    systemctl --user enable sf-mailserver sf-case-poller
+    systemctl --user start sf-mailserver
     systemctl --user start sf-case-poller
+    ok "Dashboard started (port 8090)"
     ok "SF case poller started (every 60s, auto-restart on failure)"
 
     if command -v loginctl &>/dev/null; then
@@ -338,18 +393,32 @@ SVCEOF
 fi
 
 # ────────────────────────────────────────────────────────────────
-step "4/4" "Done"
+step "4/5" "Opening dashboard"
+# ────────────────────────────────────────────────────────────────
+
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    curl -s -o /dev/null http://localhost:8090 2>/dev/null && break
+    sleep 1
+done
+
+[ "$IS_MAC" -eq 1 ] && open "http://localhost:8090" 2>/dev/null || true
+
+ok "Dashboard ready — cases loading in background"
+ok "http://localhost:8090"
+
+# ────────────────────────────────────────────────────────────────
+step "5/5" "Done"
 # ────────────────────────────────────────────────────────────────
 
 echo ""
 echo -e "${G}╔═══════════════════════════════════════════════════════╗${N}"
 echo -e "${G}║  ${BOLD}✅ Installation complete!${N}${G}                              ║${N}"
 echo -e "${G}║                                                       ║${N}"
+echo -e "${G}║  Dashboard:   ${BOLD}http://localhost:8090${N}${G}                    ║${N}"
 echo -e "${G}║  Email:       ${BOLD}supportshell → smtp.corp.redhat.com${N}${G}     ║${N}"
 echo -e "${G}║  Update/heal: ${BOLD}./update.sh${N}${G}                              ║${N}"
-echo -e "${G}║  Status:      ${BOLD}sf-case-poller status${N}${G}                     ║${N}"
 echo -e "${G}║  Uninstall:   ${BOLD}./install.sh uninstall${N}${G}                   ║${N}"
 echo -e "${G}║                                                       ║${N}"
-echo -e "${G}║  Data source: Red Hat GraphQL API (no browser / UI)   ║${N}"
+echo -e "${G}║  Data source: Red Hat GraphQL API (no browser needed) ║${N}"
 echo -e "${G}║  Polling:     Every 60 seconds • Runs 24/7            ║${N}"
 echo -e "${G}╚═══════════════════════════════════════════════════════╝${N}"

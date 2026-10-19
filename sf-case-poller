@@ -16,7 +16,7 @@ Features:
   - CLI subcommands: --once, --status, --health, --test, --test-email, --poll
 
 State:  ~/.local/state/sf-notification-center.db
-Compat: ~/.local/state/sf-case-status.json  (JSON snapshot of tracked cases)
+Compat: ~/.local/state/sf-case-status.json  (still written for dashboard)
 Log:    ~/Library/Logs/sf-case-poller.log
 """
 from __future__ import annotations
@@ -468,7 +468,7 @@ end tell
 
 def scrape_cases() -> tuple[list[dict], list[str]]:
     if not CASE_LIST_URL:
-        raise RuntimeError("No case list URL configured — set case_list_url in ~/.local/state/sf-poller-config.json")
+        raise RuntimeError("No case list URL configured — set it in the dashboard at http://localhost:8090")
 
     # Try quiet first (no tab switch, no activation, zero disruption)
     cases, columns = _do_scrape(need_all_rows=False)
@@ -1658,6 +1658,14 @@ def cmd_health(conn: sqlite3.Connection):
     except Exception:
         checks.append(("SQLite DB", "FAIL"))
 
+    # Dashboard
+    try:
+        import urllib.request
+        r = urllib.request.urlopen("http://localhost:8090", timeout=3)
+        checks.append(("Dashboard", "PASS" if r.status == 200 else "FAIL"))
+    except Exception:
+        checks.append(("Dashboard", "FAIL (port 8090)"))
+
     # Heartbeat freshness
     try:
         with open(HEARTBEAT_PATH) as f:
@@ -1838,12 +1846,18 @@ def cmd_install():
         print(f"  SSH check failed: {str(e)[:80]}")
         print(f"  Ensure SSH works: ssh {ssh_host}")
 
-    print("[6/6] Done (no local web dashboard — email via supportshell SMTP)")
+    # 6. Open dashboard in browser
+    print("[6/6] Opening dashboard...")
+    try:
+        subprocess.Popen(["open", "http://localhost:8090"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("  Dashboard: http://localhost:8090")
+    except Exception:
+        print("  Dashboard: http://localhost:8090 (open manually)")
 
     print(f"\n{'='*50}")
     print("INSTALLED SUCCESSFULLY!")
     print(f"{'='*50}")
-    print(f"\nNo browser UI — cases from GraphQL; alerts via supportshell SMTP.")
+    print(f"\nNo browser needed — cases are pulled directly from Salesforce via Red Hat GraphQL API.")
     print(f"\nCommands:")
     print(f"  sf-case-poller status      # Check status")
     print(f"  sf-case-poller health      # Health check")
@@ -1887,6 +1901,13 @@ def cmd_restart():
 def cmd_logs():
     os.execvp("tail", ["tail", "-f", os.path.expanduser("~/Library/Logs/sf-case-poller.log")])
 
+def cmd_dashboard():
+    """Open the dashboard in the default browser."""
+    url = "http://localhost:8090"
+    subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"Dashboard opened: {url}")
+
+
 def main() -> int:
     args = sys.argv[1:]
     cmd = args[0] if args else ""
@@ -1910,8 +1931,8 @@ def main() -> int:
     if cmd == "logs":
         cmd_logs()
         return 0
-    if cmd in ("dashboard", "web", "open"):
-        print("Local web dashboard removed — use: sf-case-poller status | health | logs")
+    if cmd == "dashboard" or cmd == "web" or cmd == "open":
+        cmd_dashboard()
         return 0
     if cmd in ("help", "--help", "-h", ""):
         print("SF Case Notification Center")
@@ -1928,6 +1949,7 @@ def main() -> int:
         print("Monitor:")
         print("  sf-case-poller status      Check status")
         print("  sf-case-poller health      Health check")
+        print("  sf-case-poller dashboard   Open web dashboard in browser")
         print("  sf-case-poller logs        View live logs")
         print("  sf-case-poller history     Notification history")
         print("  sf-case-poller test-email  Test email delivery")
