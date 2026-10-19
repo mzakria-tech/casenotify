@@ -46,6 +46,12 @@ SUPPORTSHELL_HOST = os.environ.get(
     "SUPPORTSHELL_HOST",
     "supportshell-1.sush-001.prod.us-west-2.aws.redhat.com",
 )
+# Shown in logs / heartbeat when GraphQL discovery fails (embedded — no chat paste needed)
+HEAL_CMD = (
+    os.environ.get("SF_NOTIFY_HEAL_CMD")
+    or 'cd ~/Desktop/sf-notification-center && ./update.sh'
+).strip()
+
 
 # Retry schedule (seconds) for failed notifications
 RETRY_DELAYS = [10, 30, 120, 300]
@@ -1337,10 +1343,13 @@ def poll_once(conn: sqlite3.Connection) -> dict:
         stats["status"] = "DISCOVERY_FAILED"
         stats["error"] = last_err
         log_error("discovery_failed", error=last_err, attempts=2)
-        _write_heartbeat(0, "DISCOVERY_FAILED", last_err)
+        log_error("discovery_heal", cmd=HEAL_CMD)
+        print(f"DISCOVERY_FAILED — heal: {HEAL_CMD}", flush=True)
+        _write_heartbeat(0, "DISCOVERY_FAILED", f"{last_err} | heal: {HEAL_CMD}")
         conn.execute(
             "INSERT INTO poll_runs (started_at, finished_at, status, error) VALUES (?,?,?,?)",
-            (run_start, datetime.now(timezone.utc).isoformat(), "DISCOVERY_FAILED", last_err),
+            (run_start, datetime.now(timezone.utc).isoformat(), "DISCOVERY_FAILED",
+             f"{last_err} | heal: {HEAL_CMD}"),
         )
         conn.commit()
         return stats

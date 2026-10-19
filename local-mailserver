@@ -33,6 +33,11 @@ POLLER_LABEL = f"com.{os.environ.get('USER', 'mzakria')}.sf-case-poller"
 LAUNCH_DIR = os.path.expanduser("~/Library/LaunchAgents")
 SSH_STATUS = {"running": True, "label": "SSH/GraphQL", "last_check": 0}  # cached, updated by watchdog
 SMTP_ENABLED = False
+# Embedded heal command (same as sf-case-poller / update.sh) — shown on dashboard when GraphQL fails
+HEAL_CMD = (
+    os.environ.get("SF_NOTIFY_HEAL_CMD")
+    or "cd ~/Desktop/sf-notification-center && ./update.sh"
+).strip()
 
 
 def _read_config() -> dict:
@@ -485,7 +490,16 @@ def _render(data: dict) -> str:
 
     ms_fix = "" if data["mailserver"]["running"] else start_btn("mailserver", "▶ Start Mail Server")
     pl_fix = "" if data["poller"]["running"] else start_btn("poller", "▶ Start Poller")
-    cr_fix = "" if data["chrome"]["running"] else start_btn("ssh", "🔧 Fix SSH (auto)")
+    if data["chrome"]["running"]:
+        cr_fix = ""
+    else:
+        # Heal command is embedded in code (update.sh) — shown on the card, not only in chat
+        safe_heal = HEAL_CMD.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        cr_fix = (
+            start_btn("ssh", "🔧 Fix SSH (auto)")
+            + f'<div class="fix-cmd" title="Copy and run in Terminal">{safe_heal}'
+            f'<span class="copy-hint">update.sh</span></div>'
+        )
     ma_fix = "" if data["mailapp"]["running"] else start_btn("mailapp", "▶ Open Mail.app")
     vpn_fix = "" if data["vpn"]["running"] else '<div class="svc-fix" style="font-size:11px">Connect Red Hat VPN</div>'
 
@@ -849,7 +863,13 @@ def _watchdog_loop():
                 SSH_STATUS["running"] = ssh_ok
                 SSH_STATUS["last_check"] = time.time()
                 if not ssh_ok:
-                    _watchdog_log(f"⚠ GraphQL: heartbeat stale ({int(age)}s) or status={hb.get('status')}")
+                    st = hb.get("status") or "?"
+                    _watchdog_log(f"⚠ GraphQL: heartbeat stale ({int(age)}s) or status={st}")
+                    if st == "DISCOVERY_FAILED" or hb.get("cases", 0) == 0:
+                        _watchdog_log(f"→ Heal: {HEAL_CMD}")
+                        err = str(hb.get("error") or "")[:120]
+                        if err:
+                            _watchdog_log(f"→ Last error: {err}")
             except FileNotFoundError:
                 pass
             except Exception as e:

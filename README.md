@@ -29,8 +29,8 @@ Polls your Salesforce case list view every 5 minutes, sends email alerts on stat
 ## Quick Start
 
 ```bash
-# Install
-chmod +x install.sh start.sh stop.sh uninstall.sh
+# Install (first time — VPN on; may ask RH password once for SSH)
+chmod +x install.sh start.sh stop.sh uninstall.sh update.sh
 ./install.sh
 
 # Start all services
@@ -40,12 +40,25 @@ chmod +x install.sh start.sh stop.sh uninstall.sh
 open http://localhost:8090
 ```
 
+## Update / heal (any laptop after git pull)
+
+GraphQL 400 / `DISCOVERY_FAILED` / stale heartbeat — one command from the repo:
+
+```bash
+cd ~/Desktop/sf-notification-center   # or your clone path
+./update.sh
+```
+
+That runs: `git pull` → sync `~/.local/bin` → restart LaunchAgents → `sf-case-poller --once`.  
+Same command is printed in the poller log and dashboard Activity Log when discovery fails.
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `./install.sh` | Install scripts, dependencies, and LaunchAgents |
-| `./start.sh` | Start all services (poller, dashboard, Chrome, Mail.app) |
+| `./update.sh` | Pull latest, sync binaries, restart, verify GraphQL |
+| `./start.sh` | Sync binaries from this repo + start services |
 | `./stop.sh` | Stop all services |
 | `./uninstall.sh` | Remove everything |
 

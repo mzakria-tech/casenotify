@@ -407,6 +407,7 @@ echo -e "${G}║  ${BOLD}✅ Installation complete!${N}${G}                     
 echo -e "${G}║                                                       ║${N}"
 echo -e "${G}║  Dashboard:   ${BOLD}http://localhost:8090${N}${G}                    ║${N}"
 echo -e "${G}║  Email:       ${BOLD}supportshell → smtp.corp.redhat.com${N}${G}     ║${N}"
+echo -e "${G}║  Update/heal: ${BOLD}./update.sh${N}${G}                              ║${N}"
 echo -e "${G}║  Uninstall:   ${BOLD}./install.sh uninstall${N}${G}                   ║${N}"
 echo -e "${G}║                                                       ║${N}"
 echo -e "${G}║  Data source: Red Hat GraphQL API (no browser needed) ║${N}"
