@@ -30,6 +30,9 @@ LAUNCH_DIR="$HOME/Library/LaunchAgents"
 if _sf_launch_start "$MAILER_LABEL" "$LAUNCH_DIR/${MAILER_LABEL}.plist"; then
     echo "→ Dashboard started"
     _sf_wait_for_port 8090 "Dashboard" || true
+    # Open as soon as :8090 is up (don't wait for GraphQL poll)
+    echo "→ Opening http://localhost:8090"
+    open "http://localhost:8090" 2>/dev/null || true
 else
     echo "→ Dashboard failed — try: ./update.sh  or  ./install.sh"
 fi
@@ -50,10 +53,6 @@ if ! echo "$ONCE_OUT" | grep -q "status=OK"; then
     echo "⚠ Discovery not OK — heal with:"
     echo "    cd \"$REPO_DIR\" && ./update.sh"
 fi
-
-# Auto-open dashboard in the default browser
-echo "→ Opening dashboard..."
-open "http://localhost:8090" 2>/dev/null || true
 
 echo ""
 echo "╔═══════════════════════════════════════════════╗"
