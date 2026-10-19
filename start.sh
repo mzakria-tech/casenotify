@@ -1,6 +1,5 @@
 #!/bin/bash
 # Start all SF Notification Center services
-set -e
 
 echo "Starting SF Notification Center..."
 
@@ -20,18 +19,36 @@ fi
 
 POLLER_LABEL="com.${USER}.sf-case-poller"
 MAILER_LABEL="com.${USER}.local-mailserver"
+DOMAIN="gui/$(id -u)"
+LAUNCH_DIR="$HOME/Library/LaunchAgents"
 
-# Start mail server (dashboard + SMTP)
-launchctl unload ~/Library/LaunchAgents/${MAILER_LABEL}.plist 2>/dev/null || true
-sleep 1
-launchctl load ~/Library/LaunchAgents/${MAILER_LABEL}.plist
-echo "→ Mail Server + Dashboard started (port 8090)"
+_launch_start() {
+    local label="$1"
+    local plist="$LAUNCH_DIR/${label}.plist"
+    if [ ! -f "$plist" ]; then
+        echo "→ Missing $plist — run ./install.sh first"
+        return 1
+    fi
+    # macOS Ventura+: use bootstrap/bootout (load/unload hits "Load failed: 5")
+    launchctl bootout "${DOMAIN}/${label}" 2>/dev/null || true
+    launchctl bootout "$DOMAIN" "$plist" 2>/dev/null || true
+    launchctl unload "$plist" 2>/dev/null || true
+    sleep 1
+    if launchctl bootstrap "$DOMAIN" "$plist" 2>/dev/null; then
+        launchctl enable "${DOMAIN}/${label}" 2>/dev/null || true
+        launchctl kickstart -k "${DOMAIN}/${label}" 2>/dev/null || true
+        return 0
+    fi
+    # Fallback for older macOS
+    if launchctl load "$plist" 2>/dev/null; then
+        return 0
+    fi
+    echo "→ Failed to start $label"
+    return 1
+}
 
-# Start poller
-launchctl unload ~/Library/LaunchAgents/${POLLER_LABEL}.plist 2>/dev/null || true
-sleep 1
-launchctl load ~/Library/LaunchAgents/${POLLER_LABEL}.plist
-echo "→ SF Case Poller started (every 1 min)"
+_launch_start "$MAILER_LABEL" && echo "→ Mail Server + Dashboard started (port 8090)"
+_launch_start "$POLLER_LABEL" && echo "→ SF Case Poller started (every 1 min)"
 
 echo ""
 echo "╔═══════════════════════════════════════════════╗"

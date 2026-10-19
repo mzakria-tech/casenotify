@@ -20,12 +20,13 @@ echo -e "${R}║   SF Notification Center — Uninstaller               ║${N}"
 echo -e "${R}╚═══════════════════════════════════════════════════════╝${N}"
 
 echo -e "\n${B}[1/4]${N} ${BOLD}Stopping services${N}"
-launchctl stop "$POLLER_LABEL" 2>/dev/null
-launchctl unload "$LAUNCH_DIR/$POLLER_LABEL.plist" 2>/dev/null
+LC_DOMAIN="gui/$(id -u)"
+launchctl bootout "${LC_DOMAIN}/${POLLER_LABEL}" 2>/dev/null || true
+launchctl unload "$LAUNCH_DIR/$POLLER_LABEL.plist" 2>/dev/null || true
 echo -e "  ${G}✓${N} SF Poller stopped"
 
-launchctl stop "$MAILER_LABEL" 2>/dev/null
-launchctl unload "$LAUNCH_DIR/$MAILER_LABEL.plist" 2>/dev/null
+launchctl bootout "${LC_DOMAIN}/${MAILER_LABEL}" 2>/dev/null || true
+launchctl unload "$LAUNCH_DIR/$MAILER_LABEL.plist" 2>/dev/null || true
 echo -e "  ${G}✓${N} Mail Server LaunchAgent stopped"
 
 pkill -f "local-mailserver" 2>/dev/null

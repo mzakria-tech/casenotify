@@ -49,9 +49,10 @@ if [ "${1:-}" = "uninstall" ]; then
 
     step "1/4" "Stopping services"
     if [ "$IS_MAC" -eq 1 ]; then
-        launchctl stop "$POLLER_LABEL" 2>/dev/null || true
+        _LC_DOMAIN="gui/$(id -u)"
+        launchctl bootout "${_LC_DOMAIN}/${POLLER_LABEL}" 2>/dev/null || true
+        launchctl bootout "${_LC_DOMAIN}/${MAILER_LABEL}" 2>/dev/null || true
         launchctl unload "$LAUNCH_DIR/$POLLER_LABEL.plist" 2>/dev/null || true
-        launchctl stop "$MAILER_LABEL" 2>/dev/null || true
         launchctl unload "$LAUNCH_DIR/$MAILER_LABEL.plist" 2>/dev/null || true
     else
         systemctl --user stop sf-case-poller 2>/dev/null || true
@@ -237,6 +238,8 @@ if [ "$IS_MAC" -eq 1 ]; then
 
     pgrep -x "Mail" > /dev/null 2>&1 && ok "Mail.app running (bonus: also sends via Mail.app)"
 
+    LC_DOMAIN="gui/$(id -u)"
+    launchctl bootout "${LC_DOMAIN}/${MAILER_LABEL}" 2>/dev/null || true
     launchctl unload "$LAUNCH_DIR/$MAILER_LABEL.plist" 2>/dev/null || true
     pkill -f "local-mailserver" 2>/dev/null || true
 
@@ -261,9 +264,14 @@ if [ "$IS_MAC" -eq 1 ]; then
 </dict>
 </plist>
 PLISTEOF
-    launchctl load "$LAUNCH_DIR/$MAILER_LABEL.plist"
+    if ! launchctl bootstrap "$LC_DOMAIN" "$LAUNCH_DIR/$MAILER_LABEL.plist" 2>/dev/null; then
+        launchctl load "$LAUNCH_DIR/$MAILER_LABEL.plist" 2>/dev/null || true
+    fi
+    launchctl enable "${LC_DOMAIN}/${MAILER_LABEL}" 2>/dev/null || true
+    launchctl kickstart -k "${LC_DOMAIN}/${MAILER_LABEL}" 2>/dev/null || true
     ok "Dashboard started (port 8090)"
 
+    launchctl bootout "${LC_DOMAIN}/${POLLER_LABEL}" 2>/dev/null || true
     launchctl unload "$LAUNCH_DIR/$POLLER_LABEL.plist" 2>/dev/null || true
 
     cat > "$LAUNCH_DIR/$POLLER_LABEL.plist" <<PLISTEOF
@@ -288,8 +296,11 @@ PLISTEOF
 </dict>
 </plist>
 PLISTEOF
-    launchctl load "$LAUNCH_DIR/$POLLER_LABEL.plist"
-    launchctl start "$POLLER_LABEL"
+    if ! launchctl bootstrap "$LC_DOMAIN" "$LAUNCH_DIR/$POLLER_LABEL.plist" 2>/dev/null; then
+        launchctl load "$LAUNCH_DIR/$POLLER_LABEL.plist" 2>/dev/null || true
+    fi
+    launchctl enable "${LC_DOMAIN}/${POLLER_LABEL}" 2>/dev/null || true
+    launchctl kickstart -k "${LC_DOMAIN}/${POLLER_LABEL}" 2>/dev/null || true
     ok "SF case poller started (every 60s)"
 
 else

@@ -5,9 +5,23 @@ echo "Stopping SF Notification Center..."
 
 POLLER_LABEL="com.${USER}.sf-case-poller"
 MAILER_LABEL="com.${USER}.local-mailserver"
+DOMAIN="gui/$(id -u)"
+LAUNCH_DIR="$HOME/Library/LaunchAgents"
 
-launchctl unload ~/Library/LaunchAgents/${POLLER_LABEL}.plist 2>/dev/null && echo "→ SF Case Poller stopped" || echo "→ SF Case Poller was not running"
-launchctl unload ~/Library/LaunchAgents/${MAILER_LABEL}.plist 2>/dev/null && echo "→ Mail Server + Dashboard stopped" || echo "→ Mail Server was not running"
+_launch_stop() {
+    local label="$1"
+    local plist="$LAUNCH_DIR/${label}.plist"
+    if launchctl bootout "${DOMAIN}/${label}" 2>/dev/null \
+        || launchctl bootout "$DOMAIN" "$plist" 2>/dev/null \
+        || launchctl unload "$plist" 2>/dev/null; then
+        echo "→ ${label} stopped"
+    else
+        echo "→ ${label} was not running"
+    fi
+}
+
+_launch_stop "$POLLER_LABEL"
+_launch_stop "$MAILER_LABEL"
 
 echo ""
 echo "All services stopped."
