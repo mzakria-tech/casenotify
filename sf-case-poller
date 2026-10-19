@@ -211,15 +211,20 @@ def _event_hash(case_id: str, event_type: str, old_val: str, new_val: str) -> st
 
 
 # ─── Notifications ─────────────────────────────────────────────────────────
-def _as_safe(s: str) -> str:
-    """Sanitize text for AppleScript (ASCII only)."""
-    s = s.replace("\\", "/").replace('"', "'").replace("\u2192", "->")
-    return "".join(c if ord(c) < 128 else "?" for c in s)
+def _as_escape(s: str) -> str:
+    """Escape for AppleScript string literals; preserve Unicode (no '?' substitution)."""
+    return (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r\n", "\\n")
+        .replace("\n", "\\n")
+        .replace("\r", "\\n")
+    )
 
 
 def _send_smtp(subject: str, body: str) -> bool:
     try:
-        msg = MIMEText(body)
+        msg = MIMEText(body, _charset="utf-8")
         msg["Subject"] = subject
         msg["From"] = "sf-notify@localhost"
         msg["To"] = TO_ADDR
@@ -235,28 +240,45 @@ def _send_mailapp(subject: str, body: str) -> bool:
     if not TO_ADDR:
         return True
     content = body if body.endswith("\n") else body + "\n"
-    safe_subj = _as_safe(subject)
-    safe_body = _as_safe(content)
-    ascript = (
-        'tell application "Mail"\n'
-        f'  set m to make new outgoing message with properties '
-        f'{{subject:"{safe_subj}", content:"{safe_body}", visible:false}}\n'
-        f'  tell m\n'
-        f'    make new to recipient at end of to recipients with properties '
-        f'{{address:"{TO_ADDR}"}}\n'
-        f'  end tell\n'
-        f'  send m\n'
-        f'end tell\n'
-    )
-    fd, path = tempfile.mkstemp(suffix=".applescript")
+    # Pass subject/body via UTF-8 temp files so Unicode (smart quotes, dashes)
+    # is preserved — embedding in the .applescript used to replace non-ASCII with '?'.
+    subj_fd, subj_path = tempfile.mkstemp(suffix=".subj.txt")
+    body_fd, body_path = tempfile.mkstemp(suffix=".body.txt")
+    script_fd, script_path = tempfile.mkstemp(suffix=".applescript")
     try:
-        with os.fdopen(fd, "w") as fh:
+        with os.fdopen(subj_fd, "w", encoding="utf-8") as fh:
+            fh.write(subject)
+        with os.fdopen(body_fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        safe_to = _as_escape(TO_ADDR)
+        ascript = f'''
+tell application "System Events" to set mailRunning to (name of processes) contains "Mail"
+if mailRunning is false then
+  tell application "Mail" to activate
+  delay 2
+end if
+set subjText to read POSIX file "{subj_path}" as «class utf8»
+set bodyText to read POSIX file "{body_path}" as «class utf8»
+tell application "Mail"
+  set m to make new outgoing message with properties {{subject:subjText, content:bodyText, visible:false}}
+  tell m
+    make new to recipient at end of to recipients with properties {{address:"{safe_to}"}}
+    send
+  end tell
+end tell
+return "OK"
+'''
+        with os.fdopen(script_fd, "w", encoding="utf-8") as fh:
             fh.write(ascript)
-        r = subprocess.run(["osascript", path], capture_output=True, text=True, timeout=15)
+        r = subprocess.run(["osascript", script_path], capture_output=True, text=True, timeout=30)
     finally:
-        os.unlink(path)
+        for p in (subj_path, body_path, script_path):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
     if r.returncode != 0:
-        log_warn("mailapp_failed", error=(r.stderr or "").strip()[:120])
+        log_warn("mailapp_failed", error=(r.stderr or r.stdout or "").strip()[:200])
         return False
     return True
 
@@ -690,9 +712,39 @@ def _ssh_python(script: str, timeout: int = 30) -> str:
 def discover_cases_graphql() -> list[dict]:
     """Discover all open cases owned by the current user via Red Hat GraphQL API.
     No Chrome needed — pulls directly from Salesforce via GraphQL."""
-    # Step 1: get OwnerId from a known case, or query without filter
+    # Seed OwnerId from local config / known case numbers (Case_Owner_Alias__c was removed from GraphQL schema)
+    known_owner = ""
+    known_case_numbers: list[str] = []
+    try:
+        known_owner = str(_cfg("sf_owner_id", "SF_OWNER_ID") or "").strip()
+    except Exception:
+        known_owner = ""
+    try:
+        with open(JSON_STATE_PATH) as f:
+            st = json.load(f)
+        cases = st.get("cases") if isinstance(st, dict) else st
+        if isinstance(cases, dict):
+            case_iter = list(cases.values())[:10]
+        else:
+            case_iter = list(cases or [])[:10]
+        for c in case_iter:
+            if not isinstance(c, dict):
+                continue
+            fields = c.get("fields") if isinstance(c.get("fields"), dict) else {}
+            cn = str(
+                c.get("CaseNumber") or c.get("number") or fields.get("CaseNumber") or ""
+            ).strip()
+            if cn:
+                known_case_numbers.append(cn)
+    except Exception:
+        pass
+    known_cases_json = json.dumps(known_case_numbers)
+
     script = f'''
-import json, urllib.request, urllib.parse, os
+import json, urllib.request, urllib.parse, os, urllib.error
+
+SEED_OWNER = {json.dumps(known_owner)}
+SEED_CASES = {known_cases_json}
 
 def get_token():
     gql_file = os.path.expanduser("~/.cache/hydra-mcp/tokens/redhat-sso-token.json")
@@ -717,64 +769,78 @@ def gql_request(query, variables, token):
     req.add_header("Accept", "application/json")
     req.add_header("apollographql-client-name", "redhat-hydra-mcp-server")
     req.add_header("apollographql-client-version", "0.1.0")
-    resp = urllib.request.urlopen(req, timeout=30)
-    return json.loads(resp.read())
+    try:
+        resp = urllib.request.urlopen(req, timeout=30)
+        return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:400]
+        raise RuntimeError("HTTP Error %s: %s" % (e.code, detail))
 
-try:
-    at = get_token()
-
-    # Get my OwnerId from config or by querying a known case
-    owner_id = ""
+def resolve_owner_id(token):
+    owner_id = (SEED_OWNER or "").strip()
     owner_id_file = os.path.expanduser("~/.cache/hydra-mcp/sf-owner-id.txt")
-    if os.path.exists(owner_id_file):
+    if not owner_id and os.path.exists(owner_id_file):
         with open(owner_id_file) as f:
             owner_id = f.read().strip()
 
-    if not owner_id:
-        # Decode the SSO JWT token to get user email, then query for user's cases
-        import base64 as b64
-        parts = at.split(".")
-        if len(parts) >= 2:
-            padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
-            claims = json.loads(b64.urlsafe_b64decode(padded))
-            email = claims.get("email", "")
-            username = claims.get("preferred_username", "")
-        else:
-            email = ""
-            username = ""
-
-        # Query a small set of recent cases and look for ones matching our user
-        q1 = """query {{ redhat_support_uiapi {{ query {{
-            RedHatSupportCase(where: {{ IsClosed: {{ eq: false }} }}, first: 100,
-                orderBy: {{ LastModifiedDate: {{ order: DESC }} }}) {{
-                edges {{ node {{ OwnerId {{ value }} Case_Owner_Alias__c {{ value }} }} }}
-            }}
-        }} }} }}"""
+    # Prefer recent cases from yank/mcp context + local seed case numbers
+    case_numbers = list(SEED_CASES or [])
+    mcp_ctx = os.path.expanduser("~/.yank/mcp-context.json")
+    if os.path.exists(mcp_ctx):
         try:
-            r1 = gql_request(q1, {{}}, at)
-            edges = (r1.get("data", {{}}).get("redhat_support_uiapi", {{}})
-                     .get("query", {{}}).get("RedHatSupportCase", {{}}).get("edges", []))
-            for e in edges:
-                n = e.get("node", {{}})
-                alias = (n.get("Case_Owner_Alias__c", {{}}) or {{}}).get("value", "")
-                oid = (n.get("OwnerId", {{}}) or {{}}).get("value", "")
-                if alias and oid and alias.lower() == "{SSH_USER}".lower():
-                    owner_id = oid
-                    break
+            ctx = json.load(open(mcp_ctx))
+            cur = str(ctx.get("current_case") or "").strip()
+            if cur:
+                case_numbers.insert(0, cur)
+            for rc in (ctx.get("recent_cases") or []):
+                cn = str(rc.get("case_number") or "").strip()
+                if cn:
+                    case_numbers.append(cn)
         except Exception:
             pass
 
-        if not owner_id and username:
-            # Fallback: match by username prefix in OwnerId (unlikely but try)
-            pass
+    if not owner_id:
+        seen = set()
+        for cn in case_numbers:
+            if not cn or cn in seen:
+                continue
+            seen.add(cn)
+            q = """query {{
+  redhat_support_uiapi {{
+    query {{
+      RedHatSupportCase(where: {{ CaseNumber__c: {{ eq: "%s" }} }}, first: 1) {{
+        edges {{ node {{ OwnerId {{ value }} CaseNumber__c {{ value }} }} }}
+      }}
+    }}
+  }}
+}}""" % cn
+            try:
+                r = gql_request(q, {{}}, token)
+                edges = (r.get("data", {{}}).get("redhat_support_uiapi", {{}})
+                         .get("query", {{}}).get("RedHatSupportCase", {{}}).get("edges", []))
+                if edges:
+                    oid = ((edges[0].get("node", {{}}).get("OwnerId", {{}}) or {{}}).get("value") or "").strip()
+                    if oid:
+                        owner_id = oid
+                        break
+            except Exception:
+                continue
 
-        if owner_id:
+    if owner_id:
+        try:
             os.makedirs(os.path.dirname(owner_id_file), exist_ok=True)
             with open(owner_id_file, "w") as f:
                 f.write(owner_id)
+        except Exception:
+            pass
+    return owner_id
+
+try:
+    at = get_token()
+    owner_id = resolve_owner_id(at)
 
     if not owner_id:
-        print(json.dumps({{"error": "could not determine OwnerId"}}))
+        print(json.dumps({{"error": "could not determine OwnerId (Case_Owner_Alias__c removed; need known case or sf_owner_id)"}}))
         raise SystemExit(1)
 
     # Query all my open cases with status + lastModified + comments metadata
@@ -845,8 +911,23 @@ except Exception as ex:
     try:
         data = json.loads(out)
         if "error" in data:
-            log_warn("graphql_discover_error", error=data["error"][:120])
+            log_warn("graphql_discover_error", error=data["error"][:300])
             return []
+        # Persist OwnerId locally so cold starts skip broken alias discovery
+        oid = str(data.get("ownerId") or "").strip()
+        if oid:
+            try:
+                cfg_path = os.path.expanduser("~/.local/state/sf-poller-config.json")
+                cfg = {}
+                if os.path.exists(cfg_path):
+                    with open(cfg_path) as f:
+                        cfg = json.load(f) or {}
+                if cfg.get("sf_owner_id") != oid:
+                    cfg["sf_owner_id"] = oid
+                    with open(cfg_path, "w") as f:
+                        json.dump(cfg, f, indent=2)
+            except Exception:
+                pass
         return data.get("cases", [])
     except Exception:
         return []
