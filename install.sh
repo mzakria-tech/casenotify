@@ -1,6 +1,6 @@
 #!/bin/bash
 # ╔═══════════════════════════════════════════════════════════════╗
-# ║  SF Notification Center — One-command installer              ║
+# ║  casenotify — One-command installer              ║
 # ║  Works on macOS (LaunchAgents) and Linux (systemd)           ║
 # ║  GraphQL-powered • No browser needed • 24/7 on any server   ║
 # ╚═══════════════════════════════════════════════════════════════╝
@@ -47,7 +47,7 @@ source "$REPO_DIR/sf-service-lib.sh"
 if [ "${1:-}" = "uninstall" ]; then
     echo ""
     echo -e "${R}╔═══════════════════════════════════════════════════════╗${N}"
-    echo -e "${R}║   SF Notification Center — Uninstaller               ║${N}"
+    echo -e "${R}║   casenotify — Uninstaller               ║${N}"
     echo -e "${R}╚═══════════════════════════════════════════════════════╝${N}"
 
     step "1/4" "Stopping services"
@@ -83,7 +83,7 @@ if [ "${1:-}" = "uninstall" ]; then
     rm -f "$BIN_DIR/sf-case-poller"
     rm -f "$BIN_DIR/local-mailserver"
     rm -f "$BIN_DIR/sf-ssh-setup"
-    rm -f "$STATE_DIR/sf-notification-center.db"
+    rm -f "$STATE_DIR/casenotify.db"
     rm -f "$STATE_DIR/sf-poller-config.json"
     rm -f "$STATE_DIR/sf-case-status.json"
     rm -f "$STATE_DIR/sf-poller-heartbeat.json"
@@ -106,7 +106,7 @@ OS_LABEL="macOS (LaunchAgents)"
 
 echo ""
 echo -e "${BOLD}╔═══════════════════════════════════════════════════════╗${N}"
-echo -e "${BOLD}║   SF Notification Center — Automatic Installer       ║${N}"
+echo -e "${BOLD}║   casenotify — Automatic Installer       ║${N}"
 echo -e "${BOLD}║   GraphQL-powered • No browser needed                ║${N}"
 echo -e "${BOLD}╚═══════════════════════════════════════════════════════╝${N}"
 
@@ -348,7 +348,7 @@ else
 
     cat > "$SYSTEMD_DIR/sf-mailserver.service" <<SVCEOF
 [Unit]
-Description=SF Notification Center Dashboard + SMTP
+Description=casenotify Dashboard + SMTP
 After=network.target
 
 [Service]

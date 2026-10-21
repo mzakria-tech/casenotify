@@ -1,8 +1,8 @@
-# SF Notification Center — Technical Documentation
+# casenotify — Technical Documentation
 
 Detailed tech stack, architecture, components, auth, data flow, and operations for engineers installing or maintaining this project.
 
-**Repo:** https://github.com/mzakria-tech/sf-notification-center  
+**Repo:** https://github.com/mzakria-tech/casenotify  
 **Audience:** Red Hat OpenShift Support engineers (macOS primary; Linux systemd supported)
 
 ---
@@ -248,7 +248,7 @@ Missing Apollo headers → **HTTP 400 Bad Request**.
 | `~/.local/bin/sf-case-poller` | Installed poller |
 | `~/.local/bin/local-mailserver` | Installed dashboard |
 | `~/.local/state/sf-poller-config.json` | Config (`notify_email`, `supportshell_user`, `sf_owner_id`, …) |
-| `~/.local/state/sf-notification-center.db` | SQLite DB |
+| `~/.local/state/casenotify.db` | SQLite DB |
 | `~/.local/state/sf-case-status.json` | Case snapshot for dashboard |
 | `~/.local/state/sf-poller-heartbeat.json` | Last successful poll / status |
 | `~/Library/Logs/sf-case-poller.log` | Poller log (macOS) |
@@ -300,8 +300,8 @@ Missing Apollo headers → **HTTP 400 Bad Request**.
 ```bash
 # Red Hat VPN on
 cd ~/Desktop
-git clone https://github.com/mzakria-tech/sf-notification-center.git
-cd sf-notification-center
+git clone https://github.com/mzakria-tech/casenotify.git
+cd casenotify
 ./install.sh
 ```
 
@@ -316,7 +316,7 @@ cd sf-notification-center
 ### Update / heal
 
 ```bash
-cd ~/Desktop/sf-notification-center
+cd ~/Desktop/casenotify
 ./update.sh
 ```
 
@@ -335,7 +335,7 @@ Opens the dashboard as soon as port **8090** is listening.
 On `DISCOVERY_FAILED`, logs / heartbeat / dashboard show:
 
 ```bash
-cd ~/Desktop/sf-notification-center && ./update.sh
+cd ~/Desktop/casenotify && ./update.sh
 ```
 
 ---
@@ -417,4 +417,4 @@ sf-case-poller health
 
 ---
 
-*Generated for the SF Notification Center project. For quick start, see [README.md](README.md).*
+*Generated for the casenotify project. For quick start, see [README.md](README.md).*

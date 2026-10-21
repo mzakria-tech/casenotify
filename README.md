@@ -1,4 +1,4 @@
-# SF Notification Center
+# casenotify
 
 Salesforce case monitor for Red Hat OpenShift Support engineers.  
 Polls open cases via **Red Hat GraphQL** (supportshell), emails via **supportshell SMTP**, and shows a live dashboard at **http://localhost:8090**.
@@ -12,15 +12,15 @@ No Chrome scraping. No Mail.app.
 ```bash
 # VPN on
 cd ~/Desktop
-git clone https://github.com/mzakria-tech/sf-notification-center.git
-cd sf-notification-center
+git clone https://github.com/mzakria-tech/casenotify.git
+cd casenotify
 ./install.sh          # SSH + yank --init (Chrome SSO) + start + open dashboard
 ```
 
 Already installed:
 
 ```bash
-cd ~/Desktop/sf-notification-center
+cd ~/Desktop/casenotify
 git pull && ./start.sh    # opens http://localhost:8090
 # or
 ./update.sh               # pull + heal + verify + open dashboard

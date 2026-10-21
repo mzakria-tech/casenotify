@@ -1,11 +1,11 @@
 #!/bin/bash
-# Stop all SF Notification Center services
+# Stop all casenotify services
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=sf-service-lib.sh
 source "$REPO_DIR/sf-service-lib.sh"
 
-echo "Stopping SF Notification Center..."
+echo "Stopping casenotify..."
 
 POLLER_LABEL="com.${USER}.sf-case-poller"
 MAILER_LABEL="com.${USER}.local-mailserver"

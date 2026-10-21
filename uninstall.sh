@@ -1,6 +1,6 @@
 #!/bin/bash
 # ╔═══════════════════════════════════════════════════════════════╗
-# ║  SF Notification Center — Complete Uninstaller               ║
+# ║  casenotify — Complete Uninstaller               ║
 # ╚═══════════════════════════════════════════════════════════════╝
 
 HOME_DIR="$HOME"
@@ -16,7 +16,7 @@ R='\033[0;31m'; G='\033[0;32m'; B='\033[1;34m'; N='\033[0m'; BOLD='\033[1m'
 
 echo ""
 echo -e "${R}╔═══════════════════════════════════════════════════════╗${N}"
-echo -e "${R}║   SF Notification Center — Uninstaller               ║${N}"
+echo -e "${R}║   casenotify — Uninstaller               ║${N}"
 echo -e "${R}╚═══════════════════════════════════════════════════════╝${N}"
 
 echo -e "\n${B}[1/4]${N} ${BOLD}Stopping services${N}"
@@ -45,7 +45,7 @@ echo -e "  ${G}✓${N} LaunchAgent plists removed"
 echo -e "\n${B}[3/4]${N} ${BOLD}Removing scripts and state${N}"
 rm -f "$BIN_DIR/sf-case-poller"
 rm -f "$BIN_DIR/local-mailserver"
-rm -f "$STATE_DIR/sf-notification-center.db"
+rm -f "$STATE_DIR/casenotify.db"
 rm -f "$STATE_DIR/sf-poller-config.json"
 rm -f "$STATE_DIR/sf-case-status.json"
 rm -f "$STATE_DIR/sf-poller-heartbeat.json"

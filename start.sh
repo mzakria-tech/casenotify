@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start all SF Notification Center services (self-heals LaunchAgents; no Mail.app)
+# Start all casenotify services (self-heals LaunchAgents; no Mail.app)
 # Always re-syncs binaries from this repo so a git pull + ./start.sh picks up fixes.
 # For pull+sync+verify in one step: ./update.sh
 
@@ -7,7 +7,7 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=sf-service-lib.sh
 source "$REPO_DIR/sf-service-lib.sh"
 
-echo "Starting SF Notification Center..."
+echo "Starting casenotify..."
 echo "→ Email via supportshell → smtp.corp.redhat.com (no Mail.app)"
 echo "→ Syncing scripts from $REPO_DIR → ~/.local/bin"
 

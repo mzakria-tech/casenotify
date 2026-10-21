@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Salesforce Case Notification Center v3 — Chrome-free GraphQL poller.
+"""casenotify v3 — Chrome-free GraphQL poller.
 
 Architecture:
   Red Hat GraphQL API → Event detection → SQLite queue → Notification dispatch
@@ -15,7 +15,7 @@ Features:
   - Structured logging
   - CLI subcommands: --once, --status, --health, --test, --test-email, --poll
 
-State:  ~/.local/state/sf-notification-center.db
+State:  ~/.local/state/casenotify.db
 Compat: ~/.local/state/sf-case-status.json  (still written for dashboard)
 Log:    ~/Library/Logs/sf-case-poller.log
 """
@@ -37,7 +37,7 @@ from email.mime.text import MIMEText
 
 # ─── Configuration ──────────────────────────────────────────────────────────
 CONFIG_PATH = os.path.expanduser("~/.local/state/sf-poller-config.json")
-DB_PATH = os.path.expanduser("~/.local/state/sf-notification-center.db")
+DB_PATH = os.path.expanduser("~/.local/state/casenotify.db")
 JSON_STATE_PATH = os.path.expanduser("~/.local/state/sf-case-status.json")
 LOG_PATH = os.path.expanduser("~/Library/Logs/sf-case-poller.log")
 HEARTBEAT_PATH = os.path.expanduser("~/.local/state/sf-poller-heartbeat.json")
@@ -49,7 +49,7 @@ SUPPORTSHELL_HOST = os.environ.get(
 # Shown in logs / heartbeat when GraphQL discovery fails (embedded — no chat paste needed)
 HEAL_CMD = (
     os.environ.get("SF_NOTIFY_HEAL_CMD")
-    or 'cd ~/Desktop/sf-notification-center && ./update.sh'
+    or 'cd ~/Desktop/casenotify && ./update.sh'
     # update.sh runs yank --init on supportshell when OIDC token is missing
 ).strip()
 
@@ -1597,7 +1597,7 @@ def cmd_status(conn: sqlite3.Connection):
     failed = conn.execute("SELECT COUNT(*) as c FROM notifications WHERE status='FAILED'").fetchone()["c"]
     init = _db_get(conn, "initialized") == "1"
 
-    print("═══ SF Case Notification Center v2 ═══")
+    print("═══ casenotify v2 ═══")
     print(f"  Service:        {'RUNNING' if os.path.exists(HEARTBEAT_PATH) else 'UNKNOWN'}")
     print(f"  Initialized:    {'Yes' if init else 'No (baseline pending)'}")
     print(f"  Cases tracked:  {cases}")
@@ -1693,7 +1693,7 @@ def cmd_test_email():
     """Send a test email via supportshell SMTP + macOS banner."""
     subject = "SF Notify Test"
     body = (
-        f"Test notification from SF Case Notification Center.\n"
+        f"Test notification from casenotify.\n"
         f"Via: supportshell → smtp.corp.redhat.com\n"
         f"To: {TO_ADDR}\n"
         f"Time: {datetime.now(timezone.utc).isoformat()}\n"
@@ -1935,7 +1935,7 @@ def main() -> int:
         cmd_dashboard()
         return 0
     if cmd in ("help", "--help", "-h", ""):
-        print("SF Case Notification Center")
+        print("casenotify")
         print("")
         print("Setup:")
         print("  sf-case-poller install     Install and start (one-time)")

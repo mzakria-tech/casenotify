@@ -25,7 +25,7 @@ ssh_ok() {
 }
 
 echo ""
-echo "SF Notification Center — SSH auto-setup"
+echo "casenotify — SSH auto-setup"
 echo -e "Target: ${BOLD}$SSH_HOST${N}"
 echo -e "${Y}Connect Red Hat VPN first.${N}"
 echo ""

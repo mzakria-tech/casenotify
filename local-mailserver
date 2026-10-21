@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SF Notification Center — Web dashboard + local SMTP.
+"""casenotify — Web dashboard + local SMTP.
 
 SMTP on port 2525, Web UI on port 8090.
 Shows live service health, tracked cases, and email notifications.
@@ -36,7 +36,7 @@ SMTP_ENABLED = False
 # Embedded heal command (same as sf-case-poller / update.sh) — shown on dashboard when GraphQL fails
 HEAL_CMD = (
     os.environ.get("SF_NOTIFY_HEAL_CMD")
-    or "cd ~/Desktop/sf-notification-center && ./update.sh"
+    or "cd ~/Desktop/casenotify && ./update.sh"
 ).strip()
 
 
@@ -186,7 +186,7 @@ DASHBOARD = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SF Notification Center</title>
+<title>casenotify</title>
 <meta http-equiv="refresh" content="15">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -307,7 +307,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 <div class="header">
   <div class="logo">SF</div>
-  <h1>Notification Center</h1>
+  <h1>casenotify</h1>
 </div>
 <div class="subtitle">Salesforce case status alerts &bull; Polls every 1 min via GraphQL API &bull; Auto-refreshes 15s</div>
 
@@ -406,7 +406,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <button class="start-btn" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:10px 32px;font-size:14px;border-radius:8px;width:100%" onclick="startService('fix_all', this)">🔧 Fix All Services</button>
 </div>
 
-<div class="footer">SF Notification Center &bull; Red Hat Support</div>
+<div class="footer">casenotify &bull; Red Hat Support</div>
 <script>
 
 }
@@ -707,7 +707,7 @@ class WebHandler(BaseHTTPRequestHandler):
                 # Clear stuck notifications
                 try:
                     import sqlite3
-                    db = os.path.expanduser("~/.local/state/sf-notification-center.db")
+                    db = os.path.expanduser("~/.local/state/casenotify.db")
                     c = sqlite3.connect(db, timeout=5)
                     c.execute("UPDATE notifications SET status='PENDING', retry_count=0 WHERE status='RETRY'")
                     c.commit()
@@ -810,7 +810,7 @@ def _watchdog_loop():
     time.sleep(10)
     _watchdog_log("Watchdog started — monitoring all services")
     hb_path = os.path.expanduser("~/.local/state/sf-poller-heartbeat.json")
-    db_path = os.path.expanduser("~/.local/state/sf-notification-center.db")
+    db_path = os.path.expanduser("~/.local/state/casenotify.db")
     cfg_path = CONFIG_PATH
     log_path = os.path.expanduser("~/Library/Logs/sf-case-poller.log")
     bin_dir = os.path.expanduser("~/.local/bin")
@@ -971,7 +971,7 @@ def _watchdog_loop():
 def main():
     global SMTP_ENABLED
     print("=" * 50)
-    print("  SF Notification Center")
+    print("  casenotify")
     print("  Web:  http://localhost:8090")
     print("  Mail: supportshell SMTP (alerts)")
     print("  Watchdog: auto-heals every 60s")

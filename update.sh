@@ -1,6 +1,6 @@
 #!/bin/bash
 # ╔═══════════════════════════════════════════════════════════════╗
-# ║  SF Notification Center — one-command update / heal          ║
+# ║  casenotify — one-command update / heal          ║
 # ║  git pull → sync binaries → restart agents → verify GraphQL  ║
 # ║  Usage (any laptop):  ./update.sh                            ║
 # ╚═══════════════════════════════════════════════════════════════╝
@@ -12,7 +12,7 @@ cd "$REPO_DIR"
 G='\033[0;32m'; Y='\033[1;33m'; B='\033[1;34m'; N='\033[0m'; BOLD='\033[1m'
 
 echo ""
-echo -e "${BOLD}SF Notification Center — update${N}"
+echo -e "${BOLD}casenotify — update${N}"
 echo -e "  Repo: ${B}${REPO_DIR}${N}"
 
 # 1) Pull latest (ff-only; never rewrite local history)
